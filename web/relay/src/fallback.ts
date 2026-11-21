@@ -1,9 +1,5 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
-import type { HttpResponse, YtAccount, YtAuthState } from './contract.js';
-import { CHROMIUM_USER_AGENT, ytImpersonationFor } from './hosts.js';
-import { MAX_RESPONSE_BYTES, UPSTREAM_TIMEOUT_MS } from './limits.js';
-import { serialise } from './serialise.js';
 
 /**
  * The private deployment's fallback credential (`web/docs/private-deployment.md`):
@@ -34,13 +30,6 @@ const SIGNED_ORIGINS = new Set([MUSIC_ORIGIN, WWW_ORIGIN]);
  * fallback spike checked the first two of.
  */
 const SIGNING_COOKIES = ['SAPISID', '__Secure-3PAPISID', '__Secure-1PAPISID'] as const;
-
-/**
- * Any recent WEB_REMIX version is accepted for the account endpoints
- * (Innertube.kt keeps a fallback the same way; the extension pinned the same
- * idea). `67` is WEB_REMIX's client id, as the music page sends it.
- */
-const WEB_REMIX_VERSION = '1.20251006.03.00';
 
 /** Whether [host] is youtube.com or google.com themselves or a subdomain: the rows a jar keeps. */
 function isYtHost(host: string): boolean {
@@ -114,54 +103,15 @@ export function sapisidhash(secret: string, origin: string, timestampSeconds: nu
   return `SAPISIDHASH ${timestampSeconds}_${digest}`;
 }
 
-// ---- reading the account (the extension's ytAuth renderers, slimmed) ----------
-
-type Json = Record<string, unknown>;
-
-/** Every object stored under [key], anywhere inside [root]. */
-function renderers(root: unknown, key: string, out: Json[] = []): Json[] {
-  if (Array.isArray(root)) {
-    for (const item of root) renderers(item, key, out);
-  } else if (root && typeof root === 'object') {
-    for (const [k, v] of Object.entries(root)) {
-      if (k === key && v && typeof v === 'object' && !Array.isArray(v)) out.push(v as Json);
-      else renderers(v, key, out);
-    }
-  }
-  return out;
-}
-
-/** A `runs` or `simpleText` field as plain text. */
-function text(node: unknown): string {
-  const n = node as { runs?: { text?: string }[]; simpleText?: string } | undefined;
-  if (n?.runs) return n.runs.map((r) => r.text ?? '').join('');
-  return n?.simpleText ?? '';
-}
-
-/** The account's photo: the largest thumbnail, which YouTube orders last. */
-function photo(item: Json): string | null {
-  const thumbnails = (item.accountPhoto as { thumbnails?: { url?: string }[] } | undefined)?.thumbnails;
-  return thumbnails?.at(-1)?.url ?? null;
-}
-
-/** Why an account_menu answer holds no account, read from what YouTube said about the session. */
-function describeEmpty(menu: unknown): string {
-  const services =
-    (menu as { responseContext?: { serviceTrackingParams?: { params?: { key?: string; value?: string }[] }[] } })?.responseContext
-      ?.serviceTrackingParams ?? [];
-  const loggedIn = services
-    .flatMap((service) => service.params ?? [])
-    .find((param) => param.key === 'logged_in')?.value;
-  if (loggedIn === '0') return 'YouTube answered as if signed out — the fallback session was not accepted';
-  return 'no account in the answer';
-}
-
 // ---- the credential ------------------------------------------------------------
 
 /**
- * The jar as a live credential: what signs a call, and who the page should be
- * told is playing. The cookie value and the SAPISID secret live in memory
- * only; nothing returned to a caller ever carries either.
+ * The jar as a live credential: what signs a call. Invisible by design —
+ * nothing about the account it holds is ever answered to the page
+ * (the owner's decision, 2026-11-21), so it has no identity to report; the
+ * probe is the operator's health check instead. The cookie value and the
+ * SAPISID secret live in memory only; nothing returned to a caller ever
+ * carries either.
  *
  * The jar is *living*, because a static one is measured to die within about a
  * quarter hour: Google rotates the timestamp cookies (`__Secure-1PSIDTS` and
@@ -181,10 +131,6 @@ export class FallbackCredential {
   private readonly persistPath: string | null;
   private cookie: string;
   private secret: string | null;
-  /** The identity authState answered, cached for the process's lifetime (the doc: "in memory"). */
-  private cached: YtAuthState | null = null;
-  /** One account read in flight, however many callers arrive while it runs. */
-  private reading: Promise<YtAuthState> | null = null;
   /** A trailing persist, so a burst of rotations becomes one write. */
   private persistTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -269,107 +215,6 @@ export class FallbackCredential {
     if (this.secret) headers.authorization = sapisidhash(this.secret, origin, timestampSeconds);
     return headers;
   }
-
-  /**
-   * authState over the fallback: the throwaway's name and avatar, read once
-   * through the signed session and cached. A failed read is answered as
-   * signed-in-with-problem and not pinned, so the next call tries the account
-   * again — a dead burner surfaces as a message, not as a wrong "signed out".
-   */
-  authState(fetchImpl: typeof globalThis.fetch, refresh = false): Promise<YtAuthState> {
-    if (!refresh && this.cached) return Promise.resolve(this.cached);
-    this.reading ??= this.readIdentity(fetchImpl)
-      .then((state) => {
-        if (state.problem === null) this.cached = state;
-        return state;
-      })
-      .finally(() => {
-        this.reading = null;
-      });
-    return this.reading;
-  }
-
-  /** Signed in regardless of the read: playback is signed by the jar either way. [problem] says what YouTube said, never what the relay holds. */
-  private problemState(problem: string): YtAuthState {
-    return { browserSignedIn: false, connected: true, signedIn: true, accounts: [], active: null, problem };
-  }
-
-  /** Reads the throwaway's identity from account_menu through the signed session. */
-  private async readIdentity(fetchImpl: typeof globalThis.fetch): Promise<YtAuthState> {
-    // account_menu is the endpoint that names the login a jar belongs to; the
-    // extension's ytAuth read it the same way, WEB_REMIX dressed and signed.
-    const url = new URL(`${MUSIC_ORIGIN}/youtubei/v1/account/account_menu?prettyPrint=false`);
-    const impersonation = ytImpersonationFor(url);
-    if (!impersonation) return this.problemState('account_menu is not a call this relay can make');
-
-    let answer: HttpResponse;
-    try {
-      answer = await serialise(
-        await fetchImpl(url, {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            'x-youtube-client-name': '67',
-            'x-youtube-client-version': WEB_REMIX_VERSION,
-            ...impersonation,
-            ...this.sign(MUSIC_ORIGIN, Math.floor(Date.now() / 1000)),
-            'user-agent': CHROMIUM_USER_AGENT,
-          },
-          body: JSON.stringify({
-            context: { client: { clientName: 'WEB_REMIX', clientVersion: WEB_REMIX_VERSION, hl: 'en', gl: 'US' }, user: {} },
-          }),
-          // The jar is attached explicitly in these headers; the ambient cookie
-          // store is empty and stays that way, same as every other upstream call.
-          credentials: 'omit',
-          signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-        }),
-        MAX_RESPONSE_BYTES,
-      );
-    } catch (error) {
-      return this.problemState(`account_menu: ${error instanceof Error ? error.message : 'the call failed'}`);
-    }
-
-    if (answer.status !== 200) {
-      // What YouTube said, in the fewest words: the status, plus YouTube's
-      // own error message when the body carries one. Neither can quote the jar.
-      let said = `HTTP ${answer.status}`;
-      try {
-        const api = (JSON.parse(answer.body) as { error?: { message?: unknown } }).error;
-        if (api && typeof api.message === 'string') said += `: ${api.message}`;
-      } catch {
-        // Not JSON — a refusal page; the status is the whole sentence.
-      }
-      return this.problemState(`account_menu: ${said}`);
-    }
-
-    let menu: unknown;
-    try {
-      menu = JSON.parse(answer.body);
-    } catch {
-      return this.problemState('account_menu: the answer was not JSON (a bot-check page, most likely)');
-    }
-    const header = renderers(menu, 'activeAccountHeaderRenderer')[0];
-    if (!header) return this.problemState(`account_menu: ${describeEmpty(menu)}`);
-
-    const name = text(header.accountName) || 'Relay account';
-    const email = text(header.email) || null;
-    const handle = text(header.channelHandle) || null;
-    const avatarUrl = photo(header);
-    // One login, one channel: the jar is a single throwaway, so there is
-    // nothing to switch between. The id keeps the extension's
-    // `authUser:pageId` shape so the page's machinery sees a channel like any
-    // other it has ever handled.
-    const channel = { id: '0:own', name, handle, avatarUrl, brand: false };
-    const account: YtAccount = { authUser: '0', name, email, avatarUrl, channels: [channel] };
-    return {
-      browserSignedIn: false,
-      connected: true,
-      signedIn: true,
-      accounts: [account],
-      active: { ...channel, authUser: '0' },
-      problem: null,
-    };
-  }
 }
 
 /**
@@ -383,9 +228,10 @@ export class FallbackCredential {
  * The file is the relay's to keep from then on: as YouTube rotates the
  * session, the jar is persisted back to it as one raw `Cookie:` line, so the
  * export is only the jar's *seed*. The runbook says to export from a browser
- * signed out immediately afterwards — a browser that stays signed in keeps
- * rotating the session out from under the relay, which is what kills a static
- * export (measured 2026-11-21).
+ * that is then quit entirely — without signing out, which would invalidate
+ * the session — because a browser that stays active keeps rotating the
+ * session out from under the relay, which is what kills a static export
+ * (measured 2026-11-21).
  */
 export function loadFallbackCredential(path: string | undefined): FallbackCredential | null {
   if (!path) return null;

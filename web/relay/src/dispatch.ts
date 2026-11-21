@@ -22,22 +22,23 @@ import { VERSION } from './version.js';
  * The relay's method dispatch — protocol check first, then a method switch,
  * with a `failure()` mapping errors onto the bridge's error codes — answering
  * the subset relay.md's table lists. Everything identity-holding is answered
- * as signed out or unsupported, with one deliberate exception
- * (`web/docs/private-deployment.md`): when the operator has loaded a fallback
- * credential, the relay signs anonymous InnerTube calls with it and
- * `yt.authState` answers the throwaway's identity. The credential itself
- * never crosses back to the page in any form.
+ * as signed out or unsupported. The one deliberate exception
+ * (`web/docs/private-deployment.md`) is invisible: when the operator has
+ * loaded a fallback credential, the relay signs anonymous InnerTube calls
+ * with it and tells the page nothing — no capability, no identity, no hint
+ * that a session exists (the owner's decision, 2026-11-21). The credential
+ * itself never crosses back to the page in any form.
  */
 
-/** What `ping` answers (relay.md): the anonymous subset. `yt.auth` joins it when a fallback credential is loaded. */
+/** What `ping` answers (relay.md): the anonymous subset — fallback or not, since the credential is invisible. */
 export const RELAY_CAPABILITIES: Capability[] = ['yt', 'addon', 'lyrics'];
 
 /**
- * Without a fallback credential the relay holds no identity and watches no
- * cookies, so the identity methods answer these static shapes. The UI already
- * renders its "not signed in" states for a transport that lacks the matching
- * capability. With one loaded, `yt.authState` answers the fallback's identity
- * instead (`fallback.ts`).
+ * The identity methods always answer this static shape, fallback or not: the
+ * fallback is invisible (the owner's decision, 2026-11-21), so the page is
+ * never told a session exists and renders its ordinary signed-out states
+ * while the relay signs playback silently. The operator's health check for
+ * the credential is the probe, not this answer.
  */
 const SIGNED_OUT_YT: YtAuthState = {
   browserSignedIn: false,
@@ -182,11 +183,11 @@ export async function handle(request: BridgeRequest, deps: DispatchDeps): Promis
           version: VERSION,
           protocol: BRIDGE_PROTOCOL,
           browser: 'server',
-          // The fallback credential is the one thing that lets this transport
-          // sign YouTube requests, which is what `yt.auth` means. Reporting it
-          // only when one is loaded keeps the page's account machinery quiet
-          // on an anonymous relay.
-          capabilities: deps.fallback ? [...RELAY_CAPABILITIES, 'yt.auth'] : RELAY_CAPABILITIES,
+          // The fallback is invisible by the owner's decision (2026-11-21):
+          // it signs the calls silently, and `yt.auth` is never reported, so
+          // the page's account machinery renders its ordinary signed-out
+          // states while playback just works.
+          capabilities: RELAY_CAPABILITIES,
         });
       case 'yt.fetch': {
         const params = (request.params ?? {}) as YtFetchParams;
@@ -285,14 +286,12 @@ export async function handle(request: BridgeRequest, deps: DispatchDeps): Promis
         // A no-op: there is no permission prompt on a server, so nothing to open.
         return okResponse(request.id, {});
       case 'yt.authState': {
-        // Without a fallback the static signed-out answer stands. With one,
-        // the identity to answer is the throwaway's: browserSignedIn stays
-        // false (this browser holds nothing) while signedIn is true, and the
-        // account is read through the signed session once, then cached in
-        // memory (fallback.ts).
-        if (!deps.fallback) return okResponse(request.id, SIGNED_OUT_YT);
-        const refresh = (request.params as { refresh?: unknown } | null | undefined)?.refresh === true;
-        return okResponse(request.id, await deps.fallback.authState(deps.fetchImpl, refresh));
+        // Always the static signed-out answer, fallback or not: the
+        // credential is invisible (the owner's decision, 2026-11-21) — it
+        // signs silently, and the page is never told a session exists, so no
+        // name, avatar or email of the shared account can surface anywhere.
+        // The operator's health check is the probe, not this answer.
+        return okResponse(request.id, SIGNED_OUT_YT);
       }
       default:
         // Includes the retired `spotify.*` family (relay.md phase 2): Spotify

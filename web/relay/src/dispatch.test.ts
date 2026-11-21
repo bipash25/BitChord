@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { RelayCache } from './cache.js';
-import { BRIDGE_CHANNEL, BRIDGE_PROTOCOL, isBridgeRequest, type BridgeRequest } from './contract.js';
+import { BRIDGE_CHANNEL, BRIDGE_PROTOCOL, isBridgeRequest, type BridgeRequest, type HttpResponse } from './contract.js';
 import { dispatchDeps, handle, RELAY_CAPABILITIES } from './dispatch.js';
 import { FallbackCredential, parseCookieJar } from './fallback.js';
 import { CHROMIUM_USER_AGENT } from './hosts.js';
@@ -392,11 +392,11 @@ describe('the fallback credential (private-deployment.md)', () => {
   /** A one-cookie jar with an obviously-secret value, distinct per use so leak hunts can't cross-contaminate. */
   const burner = () => new FallbackCredential(parseCookieJar('.google.com\tTRUE\t/\tFALSE\t1893456000\tSAPISID\tburner-secret'));
 
-  it('ping answers yt.auth only when a fallback is loaded', async () => {
+  it('ping never answers yt.auth, fallback or not — the credential is invisible', async () => {
     const bare = await handle(request('ping', {}), makeDeps().deps);
     expect(bare).toMatchObject({ ok: true, result: { capabilities: ['yt', 'addon', 'lyrics'] } });
     const signed = await handle(request('ping', {}), makeDeps(undefined, burner()).deps);
-    expect(signed).toMatchObject({ ok: true, result: { capabilities: ['yt', 'addon', 'lyrics', 'yt.auth'] } });
+    expect(signed).toMatchObject({ ok: true, result: { capabilities: ['yt', 'addon', 'lyrics'] } });
   });
 
   it('signs anonymous InnerTube calls with the jar, a SAPISIDHASH for the dressed origin, and X-Goog-AuthUser', async () => {
@@ -552,7 +552,7 @@ describe('the fallback credential (private-deployment.md)', () => {
     }
   });
 
-  it('answers authState with the fallback identity, read once through the signed session and cached', async () => {
+  it('answers authState as signed out even with a fallback loaded — the credential is invisible, and no call is made to read one', async () => {
     const { deps, fetches } = makeDeps(
       (url) =>
         url.includes('account_menu')
@@ -563,60 +563,15 @@ describe('the fallback credential (private-deployment.md)', () => {
     const answer = await handle(request('yt.authState', {}), deps);
     expect(answer).toMatchObject({
       ok: true,
-      result: {
-        browserSignedIn: false,
-        connected: true,
-        signedIn: true,
-        accounts: [
-          {
-            authUser: '0',
-            name: 'Burner One',
-            email: 'burner@example.com',
-            avatarUrl: 'https://yt3.ggpht.com/burner.png',
-            channels: [
-              { id: '0:own', name: 'Burner One', handle: '@burner', avatarUrl: 'https://yt3.ggpht.com/burner.png', brand: false },
-            ],
-          },
-        ],
-        active: { id: '0:own', name: 'Burner One', handle: '@burner', avatarUrl: 'https://yt3.ggpht.com/burner.png', brand: false, authUser: '0' },
-        problem: null,
-      },
+      result: { browserSignedIn: false, connected: false, signedIn: false, accounts: [], active: null, problem: null },
     });
-    // The read itself is a signed call, WEB_REMIX dressed as the music page.
-    expect(String(fetches[0]?.url)).toContain('account/account_menu');
-    const headers = fetches[0]?.init?.headers as Record<string, string>;
-    expect(headers['cookie']).toBe('SAPISID=burner-secret');
-    expect(headers['authorization']).toMatch(/^SAPISIDHASH \d+_[0-9a-f]{40}$/);
-    expect(headers['x-goog-authuser']).toBe('0');
-    expect(headers['origin']).toBe('https://music.youtube.com');
-    // Cached in memory: a second ask doesn't re-read the account.
-    await handle(request('yt.authState', {}), deps);
-    expect(fetches).toHaveLength(1);
-  });
-
-  it('answers authState as signed-in-with-problem when the account read fails, and retries rather than pinning it', async () => {
-    const { deps, fetches } = makeDeps(
-      (url) =>
-        url.includes('account_menu')
-          ? new Response('<html>sign in</html>', { status: 403, headers: { 'content-type': 'text/html' } })
-          : new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } }),
-      burner(),
-    );
-    const answer = await handle(request('yt.authState', {}), deps);
-    expect(answer).toMatchObject({
-      ok: true,
-      result: {
-        browserSignedIn: false,
-        connected: true,
-        signedIn: true,
-        accounts: [],
-        active: null,
-        problem: expect.stringContaining('HTTP 403'),
-      },
-    });
-    // A problem is not cached: the next call tries the account again.
-    await handle(request('yt.authState', {}), deps);
-    expect(fetches).toHaveLength(2);
+    // Nothing about the account is ever asked: identity, name or otherwise.
+    expect(fetches).toHaveLength(0);
+    // The page is never told a session exists, so it renders its ordinary
+    // signed-out states while the relay signs the calls silently.
+    const again = await handle(request('yt.authState', { refresh: true }), deps);
+    expect(again).toMatchObject({ ok: true, result: { signedIn: false } });
+    expect(fetches).toHaveLength(0);
   });
 
   it('leaks no part of the jar, or its signature, into any answer or error the dispatcher can produce', async () => {

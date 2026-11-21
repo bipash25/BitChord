@@ -4,9 +4,9 @@ import { FallbackCredential, parseCookieJar, sapisidhash } from './fallback.js';
 
 /**
  * The fallback credential's own units: the jar parser (Netscape and raw
- * shapes), the SAPISIDHASH construction, the signing fence, and the identity
- * read. What the dispatcher does with the credential — what gets signed,
- * what never leaks — lives in dispatch.test.ts.
+ * shapes), the SAPISIDHASH construction, the signing fence, and the
+ * rotation absorption. What the dispatcher does with the credential — what
+ * gets signed, what never leaks — lives in dispatch.test.ts.
  */
 
 /** A small jar with obviously-secret values, and rows that must not survive parsing. */
@@ -98,7 +98,7 @@ describe('FallbackCredential.absorbSetCookies', () => {
     const c = credential();
     c.absorbSetCookies(['SID=; Path=/; Domain=.youtube.com; Max-Age=0']);
     // By name, not substring: "SAPISID=…" contains "SID=" as text.
-    const names = c.sign('https://music.youtube.com', 0)['cookie'].split('; ').map((part) => part.split('=')[0]);
+    const names = (c.sign('https://music.youtube.com', 0)['cookie'] ?? '').split('; ').map((part) => part.split('=')[0]);
     expect(names).not.toContain('SID');
   });
 
@@ -137,97 +137,3 @@ describe('FallbackCredential.sign', () => {
   });
 });
 
-describe('FallbackCredential.authState', () => {
-  /** The header renderer account_menu answers for one signed-in login. */
-  const menu = () =>
-    new Response(
-      JSON.stringify({
-        actions: [
-          {
-            openPopupAction: {
-              popup: {
-                multiPageMenuRenderer: {
-                  header: {
-                    activeAccountHeaderRenderer: {
-                      accountName: { runs: [{ text: 'Burner One' }] },
-                      email: { simpleText: 'burner@example.com' },
-                      channelHandle: { runs: [{ text: '@burner' }] },
-                      accountPhoto: { thumbnails: [{ url: 'https://yt3.ggpht.com/burner.png' }] },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        ],
-      }),
-      { status: 200, headers: { 'content-type': 'application/json' } },
-    );
-
-  it('reads the throwaway from account_menu through the signed session, once', async () => {
-    const fetches: Array<{ url: string; init: RequestInit | undefined }> = [];
-    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-      fetches.push({ url: String(input), init });
-      return menu();
-    });
-    const fallback = new FallbackCredential(parseCookieJar('SAPISID=sec'));
-
-    const first = await fallback.authState(fetchImpl);
-    const second = await fallback.authState(fetchImpl);
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
-    expect(second).toBe(first); // cached in memory, the same object
-    expect(first).toMatchObject({
-      browserSignedIn: false,
-      connected: true,
-      signedIn: true,
-      accounts: [{ authUser: '0', name: 'Burner One', email: 'burner@example.com' }],
-      active: { name: 'Burner One', handle: '@burner', avatarUrl: 'https://yt3.ggpht.com/burner.png', authUser: '0' },
-      problem: null,
-    });
-
-    // The read itself is signed and dressed as the music page.
-    expect(fetches[0]?.url).toContain('account/account_menu');
-    const headers = fetches[0]?.init?.headers as Record<string, string>;
-    expect(headers['cookie']).toBe('SAPISID=sec');
-    expect(headers['authorization']).toMatch(/^SAPISIDHASH \d+_[0-9a-f]{40}$/);
-    expect(headers['x-goog-authuser']).toBe('0');
-    expect(headers['origin']).toBe('https://music.youtube.com');
-    expect(headers['user-agent']).toBe(
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
-    );
-  });
-
-  it('re-reads on refresh', async () => {
-    const fetchImpl = vi.fn(async () => menu());
-    const fallback = new FallbackCredential(parseCookieJar('SAPISID=sec'));
-    await fallback.authState(fetchImpl);
-    await fallback.authState(fetchImpl, true);
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
-  });
-
-  it('answers signed-in-with-problem when YouTube refuses, without pinning the failure', async () => {
-    const fetchImpl = vi.fn(async () => new Response('<html>no</html>', { status: 403, headers: { 'content-type': 'text/html' } }));
-    const fallback = new FallbackCredential(parseCookieJar('SAPISID=sec'));
-    const state = await fallback.authState(fetchImpl);
-    expect(state).toMatchObject({
-      browserSignedIn: false,
-      connected: true,
-      signedIn: true,
-      accounts: [],
-      active: null,
-      problem: expect.stringContaining('HTTP 403'),
-    });
-    // The failure isn't cached: the next call retries the account.
-    await fallback.authState(fetchImpl);
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
-  });
-
-  it('never lets the jar or its signature into the problem it reports', async () => {
-    const fetchImpl = vi.fn(() => Promise.reject(new TypeError('fetch failed')));
-    const fallback = new FallbackCredential(parseCookieJar('SAPISID=sec'));
-    const state = await fallback.authState(fetchImpl);
-    expect(state.problem).toContain('account_menu');
-    expect(JSON.stringify(state)).not.toContain('SAPISID=sec');
-    expect(JSON.stringify(state)).not.toContain('sec');
-  });
-});
