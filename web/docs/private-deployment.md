@@ -156,44 +156,59 @@ only ever printed), and the endpoint family split cleanly:
 |---|---|
 | InnerTube `player` (WEB_REMIX, music origin, SAPISIDHASH) | **none** — every time |
 | InnerTube `account/account_menu` (WEB, www origin, SAPISIDHASH) | **none** |
-| `GET https://www.youtube.com/` as a navigation | the full session family re-issued: SID, HSID, SSID, APISID, SAPISID, `__Secure-1PSID`, `__Secure-1PAPISID`, SIDCC, `__Secure-1PSIDCC`, LOGIN_INFO, YSC, GPS, `__Secure-YEC`, the visitor pair |
-| `HEAD https://www.youtube.com/` as a navigation | the same family, in a zero-byte response — YouTube decides the rotation before it would stream a body |
+| `GET https://www.youtube.com/` as a navigation | the session family's names: empty-value **deletions** for the first-party family (SID, HSID, SSID, APISID, SAPISID, `__Secure-1PSID`, `__Secure-1PAPISID`, LOGIN_INFO, YSC — a logout, since the session was already dead server-side) plus value rotations for the anonymous pair (GPS, SIDCC, `__Secure-1PSIDCC`) |
+| `HEAD https://www.youtube.com/` as a navigation | the same names, in a zero-byte response — YouTube decides the session's cookies before it would stream a body |
 | `GET https://www.youtube.com/sw.js_data` | `__Secure-YEC` only |
 | `accounts.google.com/RotateCookies` | refused in every shape tried (405 GET, 500 POST with `content-length: 0`, 400 POST JSON) |
 
 Consequences, in order:
 
-- **InnerTube never rotates the session.** The absorption wired into the
-  relay's signed calls is correct code that cannot fire — the seeded file
-  sat untouched through the whole first deployment (its mtime was still
-  the export's, and the relay rewrites it as a `Cookie:` line on its first
-  absorbed rotation). A jar refreshed only by what InnerTube sends stays
-  exactly as stale as the export.
-- **Page loads always rotate it.** So the relay now runs a **session
-  keeper** (`web/relay/src/keeper.ts`): with a fallback loaded, a `HEAD`
-  of the www homepage — one immediately at startup, then one every ten
-  minutes, comfortably inside the 15–30 minute death window of an
-  un-rotated jar — answered with the jar, its `Set-Cookie` absorbed into
-  the live jar, persisted back to the seed file. Every absorption logs the
-  rotated cookie *names*, never a value. A repeated harvest after a fresh
-  re-issue rotates only GPS/SIDCC/`__Secure-1PSIDCC`; the full-family
-  re-issue lands once per stale period, which is exactly the renewal the
-  keeper exists to collect.
-- **A refresh does not lift a bot-check.** The dead jar was refreshed in
-  memory through the homepage rotation (the full family re-issued — the
-  session was still alive server-side) and `player` still answered
-  "Sign in to confirm you're not a bot". The evening's wall is on the
-  account+IP, not on stale cookies: this egress had by then carried three
-  probe runs plus hosting traffic within two hours, all from one
-  datacenter IP. Session keeping and bot-flagging are separate problems;
-  the keeper solves the first.
+- **InnerTube never touches the session's cookies.** The absorption wired
+  into the relay's signed calls is correct code that cannot fire — the
+  seeded file sat untouched through the whole first deployment (its mtime
+  was still the export's, and the relay rewrites it as a `Cookie:` line on
+  its first absorbed rotation). A jar refreshed only by what InnerTube
+  sends stays exactly as stale as the export.
+- **Page loads are the only place the session's cookies are decided** —
+  re-issued for a session that is alive server-side (what a signed-in
+  browser keeps receiving), deleted for one that is dead. So the relay
+  runs a **session keeper** (`web/relay/src/keeper.ts`): with a fallback
+  loaded, a `HEAD` of the www homepage — one immediately at startup, then
+  one every ten minutes, comfortably inside the 15–30 minute death window
+  of an un-rotated jar — answered with the jar, its `Set-Cookie` absorbed
+  into the live jar, persisted back to the seed file. Every absorption
+  logs the touched cookie *names*, never a value.
+- **The dead session's page load is a logout, and the relay says so
+  loudly.** The first live keeper run proved the deletion reading
+  end-to-end: the harvest at 18:00 absorbed the batch above, logged the
+  names, persisted — and the jar came out at 21 entries with the entire
+  first-party family gone. (Each deleted name had appeared exactly once
+  in the absorption log, so those were single deletion lines, not a
+  delete-then-re-issue pair an account switch would produce.) The relay
+  now warns on the logout signature — `YouTube logged the fallback
+  session out (deleted SID, HSID, …)` — and `loadFallbackCredential`
+  refuses a jar with no `SID`/`__Secure-1PSID` left (the logged-out
+  remnant the persist writes) as a loud error line and runs
+  anonymous-only rather than throwing, so the site's browse and search
+  survive while playback waits for a fresh export. This also explains the
+  evening's earlier "refresh the jar, then call player" test: the refresh
+  had *removed* the session, so `player` answered the anonymous
+  bot-check.
+- **The bot-check itself is a separate problem from session death.** The
+  signed `player` was refused at 17:36 while the homepage was still
+  answering (a 425 KB `account_menu` body at 200, sign-in or sign-out
+  alike), and the logout only landed at 18:00. This egress had by then
+  carried three probe runs plus hosting traffic within two hours, all
+  from one datacenter IP; whether the flag or the source browser's
+  rotation killed the session first is what the fresh export decides.
 - **The `__Secure-1PSIDTS` pair is rotated by nothing the relay can
   reach** — not the homepage, not `sw.js_data`, not InnerTube, and
   `RotateCookies` refuses. It is the cookie yt-dlp blames ("no longer
   valid; likely rotated in the browser"); in a browser it presumably
   arrives through an accounts.google.com flow the relay cannot reproduce.
-  Whether the PSIDTS gap matters — whether the SID/HSID/SAPISID re-issue
-  is enough — is precisely what the fresh-jar test answers next.
+  Whether the PSIDTS gap matters — whether the rest of the family is
+  enough to keep a *live* session alive — is precisely what the fresh-jar
+  test answers next.
 
 **The one thing still needed from the operator:** a fresh export from the
 throwaway, taken from a browser that is then **quit entirely — not signed

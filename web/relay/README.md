@@ -171,22 +171,28 @@ unsigned.
 minutes, and the relay's own traffic can't rotate it: measured 2026-11-21,
 InnerTube responses (`player`, `account_menu`) carry **no `Set-Cookie` at
 all**, so the absorption wired into signed calls never fires — the seeded
-file sat untouched for the whole first deployment. The rotations arrive on
-*page loads* instead: a `HEAD` of `https://www.youtube.com/` answered the jar
-with a full session re-issue (SID, HSID, SSID, APISID, SAPISID,
-`__Secure-1PSID`, the SIDCC pair) in a zero-byte response. So with a
-fallback loaded the relay runs a **session keeper** (`src/keeper.ts`): one
-harvest immediately at startup — a relay restarted hours after the export
-refreshes the stale jar before the first playback request signs with it —
-then one every ten minutes, absorbed into the live jar and persisted back to
-the seed file as one raw `Cookie:` line, so a restart continues the same
-session. Every absorption logs the rotated cookie **names** and nothing
-else; that log line is the living jar's heartbeat. One limit, recorded
-rather than hidden: the `__Secure-1PSIDTS` pair yt-dlp blames for stale
-exports is rotated by nothing the relay can reach (no YouTube page or
-InnerTube endpoint re-issues it, and Google's `RotateCookies` servlet
-refused every shape tried) — whether that gap matters is what the
-fresh-jar test answers (`web/docs/private-deployment.md`).
+file sat untouched for the whole first deployment. The session's cookies are
+decided on *page loads* instead: a `HEAD` of `https://www.youtube.com/`
+answers the jar with the family's `Set-Cookie` lines in a zero-byte
+response — re-issued values for a session that is alive server-side, and
+empty-value deletions (a logout) for one that is dead, both measured. So
+with a fallback loaded the relay runs a **session keeper** (`src/keeper.ts`):
+one harvest immediately at startup — a relay restarted hours after the
+export refreshes the stale jar before the first playback request signs with
+it — then one every ten minutes, absorbed into the live jar and persisted
+back to the seed file as one raw `Cookie:` line, so a restart continues the
+same session. Every absorption logs the touched cookie **names** and nothing
+else; that log line is the living jar's heartbeat. A harvest that deletes
+the first-party session family is the logout signature, and the relay says
+so loudly (`YouTube logged the fallback session out (deleted SID, HSID, …)`)
+and refuses the logged-out remnant at the next startup — anonymous-only
+with an error line rather than a crash, so the site's browse and search
+survive. One limit, recorded rather than hidden: the `__Secure-1PSIDTS`
+pair yt-dlp blames for stale exports is rotated by nothing the relay can
+reach (no YouTube page or InnerTube endpoint re-issues it, and Google's
+`RotateCookies` servlet refused every shape tried) — whether that gap
+matters is what the fresh-jar test answers
+(`web/docs/private-deployment.md`).
 
 **Rotation.** A bot-check on the burner is an env swap, not an outage. Keep a
 **second burner** pre-created and signed in, export its `cookies.txt` ahead

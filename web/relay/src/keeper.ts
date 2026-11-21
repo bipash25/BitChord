@@ -6,16 +6,17 @@ import { UPSTREAM_TIMEOUT_MS } from './limits.js';
  * The session keeper: the relay's share of keeping the fallback account's
  * session rotated (`web/docs/private-deployment.md`). The browser that
  * exported the jar used to do this by accident — every page load it made
- * re-issued the session cookies — and a jar nobody rotates is measured dead
- * within about a quarter hour. The relay can't harvest on the calls it
- * already makes: InnerTube responses carry no `Set-Cookie` at all (measured
- * 2026-11-21, player and account_menu alike, on a jar YouTube was still
- * recognizing), so this module performs the one request that *is* measured to
- * rotate: a page load of the www homepage as the signed-in browser would
- * make it. A HEAD suffices and costs a zero-byte body — YouTube decides the
- * rotation before it would stream anything — and the answer's `Set-Cookie`
- * lines are absorbed into the live jar (`absorbSetCookies` does the merging,
- * the persisting and the names-only log line).
+ * carried the session's `Set-Cookie` family back — and a jar nobody rotates
+ * is measured dead within about a quarter hour. The relay can't harvest on
+ * the calls it already makes: InnerTube responses carry no `Set-Cookie` at
+ * all (measured 2026-11-21, player and account_menu alike), so this module
+ * performs the one request that does carry them: a page load of the www
+ * homepage as the signed-in browser would make it. A HEAD suffices and
+ * costs a zero-byte body — YouTube decides the session's cookies before it
+ * would stream anything — and the answer's `Set-Cookie` lines are absorbed
+ * into the live jar (`absorbSetCookies` does the merging, the persisting,
+ * and the names-only logging, including the loud warning when the answer
+ * turns out to be YouTube logging the session out rather than rotating it).
  *
  * What this cannot do, recorded rather than hidden: the harvest rotates the
  * core session family (SID, HSID, SSID, APISID, SAPISID, `__Secure-1PSID`,

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FallbackCredential, parseCookieJar, sapisidhash } from './fallback.js';
+import { FallbackCredential, loadFallbackCredential, parseCookieJar, sapisidhash } from './fallback.js';
 
 /**
  * The fallback credential's own units: the jar parser (Netscape and raw
@@ -121,6 +121,45 @@ describe('FallbackCredential.absorbSetCookies', () => {
     expect(names).not.toContain('SID');
   });
 
+  it('warns loudly, by name, when an absorption deletes the session family — YouTube logged the session out', () => {
+    // The measured shape of a dead jar's page load: empty-value Set-Cookie
+    // lines for the first-party family. A relay that absorbed this silently
+    // would sign anonymous requests while claiming a fallback.
+    const warned: string[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+      warned.push(args.map(String).join(' '));
+    });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const c = credential();
+      c.absorbSetCookies(['SID=; Path=/; Domain=.youtube.com; Max-Age=0', 'SAPISID=; Domain=.youtube.com; Max-Age=0']);
+      const line = warned.join('\n');
+      expect(line).toContain('logged the fallback session out');
+      expect(line).toContain('SID');
+      expect(line).toContain('SAPISID');
+      expect(line).not.toContain('secret'); // the jar's values stay out of it
+      // And the jar really is gutted: sign() no longer carries a session.
+      expect(c.sign('https://music.youtube.com', 0)['cookie']).not.toContain('SID=');
+    } finally {
+      warn.mockRestore();
+      log.mockRestore();
+    }
+  });
+
+  it('does not cry logout when a deletion is re-set in the same batch — an account switch, not an ending', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const c = credential();
+      c.absorbSetCookies(['SID=; Domain=.youtube.com; Max-Age=0', 'SID=switched; Domain=.youtube.com']);
+      expect(warn).not.toHaveBeenCalled();
+      expect(c.sign('https://music.youtube.com', 0)['cookie']).toContain('SID=switched');
+    } finally {
+      warn.mockRestore();
+      log.mockRestore();
+    }
+  });
+
   it('re-signs with a rotated SAPISID, keeping the HttpOnly session cookies alongside', () => {
     const c = credential();
     c.absorbSetCookies(['SAPISID=next-secret; Path=/; Domain=.youtube.com']);
@@ -166,6 +205,54 @@ describe('FallbackCredential.navigationHeaders', () => {
   it('refuses an origin outside the two YouTube origins, exactly as sign does', () => {
     const fallback = new FallbackCredential(parseCookieJar('SAPISID=s'));
     expect(() => fallback.navigationHeaders('https://accounts.google.com')).toThrow(/only navigates/);
+  });
+});
+
+describe('loadFallbackCredential', () => {
+  const scratch = (name: string) => `${tmpdir()}/bitchord-load-${name}.test.txt`;
+
+  it('loads a jar that holds a first-party session cookie', () => {
+    const path = scratch('good');
+    writeFileSync(path, 'SID=a; HSID=b; SAPISID=s\n');
+    try {
+      const credential = loadFallbackCredential(path);
+      expect(credential).not.toBeNull();
+      expect(credential?.sign('https://music.youtube.com', 1)['cookie']).toContain('SID=a');
+    } finally {
+      rmSync(path, { force: true });
+    }
+  });
+
+  it('refuses the logged-out remnant loudly and answers null — the relay runs anonymous-only', () => {
+    const path = scratch('remnant');
+    // The shape the persist writes after YouTube logs the session out: the
+    // 3P variants and visitor cookies stand, the first-party family is gone.
+    writeFileSync(path, 'Cookie: __Secure-3PSID=x; __Secure-3PAPISID=y; SIDCC=z\n');
+    const errors: string[] = [];
+    const error = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      errors.push(args.map(String).join(' '));
+    });
+    try {
+      expect(loadFallbackCredential(path)).toBeNull();
+      const line = errors.join('\n');
+      expect(line).toContain('logged-out remnant');
+      // Names only, ever: none of the remnant's values cross into the line.
+      expect(line).not.toContain('=x');
+      expect(line).not.toContain('=y');
+    } finally {
+      error.mockRestore();
+      rmSync(path, { force: true });
+    }
+  });
+
+  it('still throws outright on a configured file with nothing usable in it', () => {
+    const path = scratch('empty');
+    writeFileSync(path, '# nothing parseable\n');
+    try {
+      expect(() => loadFallbackCredential(path)).toThrow(/holds no youtube\.com or google\.com cookies/);
+    } finally {
+      rmSync(path, { force: true });
+    }
   });
 });
 

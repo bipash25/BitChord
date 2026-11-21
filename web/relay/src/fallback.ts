@@ -31,6 +31,31 @@ const SIGNED_ORIGINS = new Set([MUSIC_ORIGIN, WWW_ORIGIN]);
  */
 const SIGNING_COOKIES = ['SAPISID', '__Secure-3PAPISID', '__Secure-1PAPISID'] as const;
 
+/**
+ * The first-party session cookies: the ones a signed-in export always holds
+ * and a logout always deletes. Measured 2026-11-21, the dead jar's page load
+ * answered with empty-value `Set-Cookie` lines for exactly this family (SID,
+ * HSID, SSID, APISID, SAPISID, `__Secure-1PSID`, `__Secure-1PAPISID`,
+ * LOGIN_INFO) while leaving the 3P variants and the visitor cookies standing
+ * — so "the first-party session is gone" is testable, both at load time and
+ * after an absorption.
+ */
+const SESSION_COOKIES = new Set([
+  'SID',
+  'HSID',
+  'SSID',
+  'APISID',
+  'SAPISID',
+  '__Secure-1PSID',
+  '__Secure-3PSID',
+  '__Secure-1PAPISID',
+  '__Secure-3PAPISID',
+  'LOGIN_INFO',
+]);
+
+/** The minimum a jar must hold to be a session at all: one first-party session id. */
+const SESSION_CORE = ['SID', '__Secure-1PSID'] as const;
+
 /** Whether [host] is youtube.com or google.com themselves or a subdomain: the rows a jar keeps. */
 function isYtHost(host: string): boolean {
   return (
@@ -124,11 +149,14 @@ export function sapisidhash(secret: string, origin: string, timestampSeconds: nu
  * absorption on signed calls never fires (the seeded file was never
  * rewritten, and a jar refreshed only by what InnerTube sends stays exactly
  * as stale as the export). The rotations arrive on *page loads* instead — a
- * HEAD of the www homepage answers the jar with a full session re-issue — so
- * the session keeper (`keeper.ts`) harvests there: rotations are absorbed
- * into the live jar, the next call signs with them, and the jar is persisted
- * back to [persistPath] (as one raw `Cookie:` line) so a restart continues
- * the same session instead of a dead export.
+ * HEAD of the www homepage answers the jar with the session's `Set-Cookie`
+ * family, which carries re-issued values while the session is alive
+ * server-side and deletions once it is dead (both shapes measured 2026-11-21;
+ * the deletion shape is the logout `absorbSetCookies` warns about) — so the
+ * session keeper (`keeper.ts`) harvests there: rotations are absorbed into
+ * the live jar, the next call signs with them, and the jar is persisted back
+ * to [persistPath] (as one raw `Cookie:` line) so a restart continues the
+ * same session instead of a dead export.
  */
 export class FallbackCredential {
   private readonly jar: Map<string, string>;
@@ -155,6 +183,12 @@ export class FallbackCredential {
   absorbSetCookies(lines: readonly string[]): boolean {
     let changed = false;
     const names: string[] = [];
+    // Session cookies this batch deleted outright (empty value). A rotation
+    // re-issues values; a deletion means the session is over server-side —
+    // measured 2026-11-21, a page load of the dead jar deleted the whole
+    // first-party family, and a later line re-setting the name cancels the
+    // alarm (an account switch deletes then re-issues).
+    const logout = new Set<string>();
     for (const line of lines) {
       const first = line.indexOf(';');
       const pair = first === -1 ? line : line.slice(0, first);
@@ -176,9 +210,11 @@ export class FallbackCredential {
           changed = true;
           names.push(name);
         }
+        if (SESSION_COOKIES.has(name)) logout.add(name);
         continue;
       }
       if (!isCookieValue(value)) continue;
+      logout.delete(name);
       if (this.jar.get(name) !== value) {
         this.jar.set(name, value);
         changed = true;
@@ -192,6 +228,16 @@ export class FallbackCredential {
       // rotated and nothing else (the value is the session itself).
       console.log(`BitChord relay: fallback jar absorbed a rotation: ${names.join(', ')}`);
       this.rotate();
+    }
+    if (logout.size) {
+      // The loud version of the same hygiene: names only. Without this line
+      // a logged-out jar keeps "working" — the relay signs anonymous
+      // requests while claiming a fallback, and the operator finds out from
+      // failing playback instead of the log.
+      console.warn(
+        `BitChord relay: YouTube logged the fallback session out (deleted ${[...logout].join(', ')}); ` +
+          `playback will bot-check — replace the jar with the second burner's export`,
+      );
     }
     return changed;
   }
@@ -238,11 +284,12 @@ export class FallbackCredential {
    * the jar as its Cookie header, and nothing else — a page load sends no
    * SAPISIDHASH and no authUser, and the session keeper's harvest
    * (`keeper.ts`) is exactly that shape. Measured 2026-11-21: the www
-   * homepage answered it with the full session re-issue (SID, HSID, SSID,
-   * APISID, SAPISID, `__Secure-1PSID`, the SIDCC pair) while every InnerTube
-   * response carried no Set-Cookie at all — page loads are the only place
-   * YouTube rotates the session, so they are the only thing the relay can
-   * harvest. Same two-origin fence as sign().
+   * homepage answered it with the session's `Set-Cookie` family (the SID,
+   * HSID, SSID, APISID, SAPISID, `__Secure-1PSID`, SIDCC names — re-issued
+   * values for a live session, deletions for a dead one) while every
+   * InnerTube response carried no Set-Cookie at all — page loads are the
+   * only place YouTube touches the session's cookies, so they are the only
+   * thing the relay can harvest. Same two-origin fence as sign().
    */
   navigationHeaders(origin: string): { cookie: string } {
     if (!SIGNED_ORIGINS.has(origin)) {
@@ -262,6 +309,14 @@ export class FallbackCredential {
  * working, so it must fail loudly. The error names the file, never its
  * contents.
  *
+ * One shape is warned about rather than thrown at: a jar that parses but
+ * holds no first-party session cookie is the logged-out remnant of a session
+ * that died while the relay was running (the persist wrote YouTube's logout
+ * back to the file — the deletion signature `absorbSetCookies` documents).
+ * Throwing would take the whole site's browse and search down with playback;
+ * instead the relay runs anonymous-only, says so here, and the fresh export
+ * the runbook asks for makes the next restart a fallback again.
+ *
  * The file is the relay's to keep from then on: as YouTube rotates the
  * session, the jar is persisted back to it as one raw `Cookie:` line, so the
  * export is only the jar's *seed*. The runbook says to export from a browser
@@ -275,6 +330,14 @@ export function loadFallbackCredential(path: string | undefined): FallbackCreden
   const jar = parseCookieJar(new TextDecoder().decode(readFileSync(path)));
   if (jar.size === 0) {
     throw new Error(`${path} holds no youtube.com or google.com cookies; the fallback cannot sign anything`);
+  }
+  if (!SESSION_CORE.some((name) => jar.has(name))) {
+    console.error(
+      `BitChord relay: ${path} holds no first-party session cookie (SID or __Secure-1PSID) — ` +
+        `the logged-out remnant of a dead session, so the relay runs anonymous-only; ` +
+        `replace the file with a fresh export and restart`,
+    );
+    return null;
   }
   return new FallbackCredential(jar, path);
 }
