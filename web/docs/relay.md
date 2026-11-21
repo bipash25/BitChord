@@ -20,7 +20,10 @@ phase:
 - **hold user credentials.** No cookies, no `sp_dc`, no Discord tokens
   server-side — a server holding users' raw sessions is a honeypot. Phase 1
   serves anonymous only; phase 2 adds YouTube sign-in through Google's OAuth
-  device flow, whose tokens live client-side (below).
+  device flow, whose tokens live client-side (below). One deliberate
+  exception, decided in `web/docs/private-deployment.md`: a *throwaway*
+  account's cookie as the anonymous-fallback signer on a private deployment
+  — never the public site, never a personal account.
 - **become a general proxy.** Every method is limited to an allowlist of hosts.
 
 What it *does* do — the extension's `declarativeNetRequest` rules
