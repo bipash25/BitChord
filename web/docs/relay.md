@@ -67,7 +67,7 @@ Methods served:
 |---|---|
 | `ping` | as above |
 | `yt.fetch` (no `auth`) | allowlisted YouTube hosts, impersonated as the table above |
-| `yt.fetch` (`auth: true`) | `unauthenticated`: "The relay can't sign YouTube requests. The extension can." |
+| `yt.fetch` (`auth: true`) | `unauthenticated` without a fallback credential: "The relay can't sign YouTube requests; its operator can set RELAY_FALLBACK_COOKIES_FILE to a shared account." With one loaded, served signed like an anonymous call (`web/docs/private-deployment.md`) |
 | `addon.fetch` | any `https://` URL (user-added addon servers), no cookies, capped |
 | `lyrics.fetch` | only the hosts in the relay's `LYRIC_ORIGINS` (`web/relay/src/hosts.ts`) |
 | `lyrics.permissions` | `{ granted: origins.filter(host is allowlisted) }` — the relay needs no grants |
@@ -343,7 +343,15 @@ InnerTube call once signed in):
   anonymously without any credential at all. The private path is confirmed:
   with a real jar on the dev VPS, yt-dlp resolved itag 251 over https from
   that same bot-checked egress, and a fallback-loaded relay passed the wall
-  on its first live probe (see `web/docs/private-deployment.md`).
+  on its first live probe (see `web/docs/private-deployment.md`). That jar
+  is the relay's to keep alive from then on — InnerTube responses carry no
+  `Set-Cookie` at all (measured), so the rotations are harvested by a
+  session keeper's `HEAD` of the www homepage — and the fallback is
+  **invisible** (the owner's decision, 2026-11-21): `ping` never reports
+  `yt.auth` and `yt.authState` answers the static signed-out state, so no
+  name, avatar or email of the shared account ever reaches the page. Both
+  the measurements and the keeper's limits are recorded in
+  `web/docs/private-deployment.md`.
 - Age-restricted playback: the signed web clients' streams still carry the
   ~60–70 s stream-protection problem (`web/docs/youtube-playback.md`),
   independent of how auth travels; age-gated tracks may stay unplayable until

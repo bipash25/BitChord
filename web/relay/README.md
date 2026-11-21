@@ -37,13 +37,13 @@ as its one transport (`serverBridge`): one endpoint, `POST {base}/bridge`, a
 
 | Method | Behaviour |
 | --- | --- |
-| `ping` | `{ version, protocol: 1, browser: "server", capabilities: ["yt", "addon", "lyrics"] }` — plus `"yt.auth"` when a fallback credential is loaded |
+| `ping` | `{ version, protocol: 1, browser: "server", capabilities: ["yt", "addon", "lyrics"] }` — the anonymous subset whether or not a fallback credential is loaded (the credential is invisible) |
 | `yt.fetch` | allowlisted YouTube hosts, impersonated per the table in `src/hosts.ts`. Anonymous InnerTube calls are signed with the fallback account when one is loaded; a page-held `Authorization` is forwarded untouched (bring your own); `auth: true` is served the same way with a fallback, `unauthenticated` without one |
 | `addon.fetch` | any `https://` URL, no cookies, capped |
 | `lyrics.fetch` | only the hosts in `LYRIC_ORIGINS` |
 | `lyrics.permissions` | the requested origins that are allowlisted (the relay needs no grants) |
 | `lyrics.requestPermissions` | a no-op |
-| `yt.authState` | the fallback identity when a credential is loaded (read once, cached in memory), the static signed-out state otherwise |
+| `yt.authState` | always the static signed-out state — the fallback is invisible (the owner's decision, 2026-11-21); the operator's health check for the credential is the probe, not this answer |
 | anything else | `unsupported` (including the retired `spotify.*` family — Spotify is the page's own PKCE business now, `web/docs/relay.md` phase 2) |
 
 Responses are serialised as text bodies (`bodyEncoding: "text"`) and base64
@@ -95,7 +95,7 @@ move; `youtubei.js` exists for the probe script only.
 | `PORT` | `8787` | The port the HTTP server listens on (all interfaces). |
 | `RELAY_ALLOWED_ORIGINS` | `http://localhost:5173` | Comma-separated exact origins allowed to read answers (the Vite dev server's origin). |
 | `RELAY_TRUST_PROXY` | off | `1` to key the rate limit on the first `X-Forwarded-For` value; set it only behind your own reverse proxy. |
-| `RELAY_FALLBACK_COOKIES_FILE` | off | Path to the fallback account's cookie jar — a Netscape `cookies.txt` or a raw `Cookie:` header line. Signs anonymous InnerTube calls; see "Private deployment" below. |
+| `RELAY_FALLBACK_COOKIES_FILE` | off | Path to the fallback account's cookie jar — a Netscape `cookies.txt` or a raw `Cookie:` header line. Signs anonymous InnerTube calls and starts the session keeper that keeps the jar rotating; see "Private deployment" below. |
 
 The app side takes `VITE_RELAY_URL` (Cloudflare Pages env).
 
@@ -154,23 +154,48 @@ Creating the burner, once:
 
 With a jar loaded, the relay signs every anonymous `youtubei` call it proxies
 (`Cookie`, `SAPISIDHASH` for the origin the impersonation table picked,
-`X-Goog-AuthUser: 0`), serves `yt.fetch` with `auth: true` the same way, and
-answers `yt.authState` with the account's name and avatar — read once through
-`account/account_menu` and cached in memory. The page never learns anything
-credential-shaped: the cookie, the signature and the jar's contents appear in
-no response, error, log line or cache key, and the jar is attached only to
-the two `youtube.com` InnerTube origins. A friend who brings their own
-credential never touches the fallback: a call that arrives with a page-held
-`Authorization` header is forwarded untouched and left unsigned.
+`X-Goog-AuthUser: 0`) and serves `yt.fetch` with `auth: true` the same way —
+and that is all the page ever learns: the fallback is **invisible** (the
+owner's decision, 2026-11-21). `ping` never reports `yt.auth`, and
+`yt.authState` always answers the static signed-out state, so the app renders
+its ordinary signed-out prompts while playback rides the throwaway's session
+— no name, avatar or email of the shared account can surface anywhere. The
+credential never crosses back either: the cookie, the signature and the
+jar's contents appear in no response, error, log line or cache key, and the
+jar is attached only to the two `youtube.com` InnerTube origins. A friend who
+brings their own credential never touches the fallback: a call that arrives
+with a page-held `Authorization` header is forwarded untouched and left
+unsigned.
+
+**Session keeping.** A jar nothing rotates is measured dead within 15–30
+minutes, and the relay's own traffic can't rotate it: measured 2026-11-21,
+InnerTube responses (`player`, `account_menu`) carry **no `Set-Cookie` at
+all**, so the absorption wired into signed calls never fires — the seeded
+file sat untouched for the whole first deployment. The rotations arrive on
+*page loads* instead: a `HEAD` of `https://www.youtube.com/` answered the jar
+with a full session re-issue (SID, HSID, SSID, APISID, SAPISID,
+`__Secure-1PSID`, the SIDCC pair) in a zero-byte response. So with a
+fallback loaded the relay runs a **session keeper** (`src/keeper.ts`): one
+harvest immediately at startup — a relay restarted hours after the export
+refreshes the stale jar before the first playback request signs with it —
+then one every ten minutes, absorbed into the live jar and persisted back to
+the seed file as one raw `Cookie:` line, so a restart continues the same
+session. Every absorption logs the rotated cookie **names** and nothing
+else; that log line is the living jar's heartbeat. One limit, recorded
+rather than hidden: the `__Secure-1PSIDTS` pair yt-dlp blames for stale
+exports is rotated by nothing the relay can reach (no YouTube page or
+InnerTube endpoint re-issues it, and Google's `RotateCookies` servlet
+refused every shape tried) — whether that gap matters is what the
+fresh-jar test answers (`web/docs/private-deployment.md`).
 
 **Rotation.** A bot-check on the burner is an env swap, not an outage. Keep a
 **second burner** pre-created and signed in, export its `cookies.txt` ahead
 of time, and when the first account starts being refused again — playback
-answering "confirm you're not a bot", or `yt.authState` reporting a problem —
-copy the second file over the first and restart the relay. The per-IP rate
-limit and the response cache keep the account's request rate gentle as a side
-effect; at 5–15 users the traffic is tiny and human-shaped, which is exactly
-the shape the shared-fallback design is sound at.
+answering "confirm you're not a bot", or the log's rotation lines going
+quiet — copy the second file over the first and restart the relay. The
+per-IP rate limit and the response cache keep the account's request rate
+gentle as a side effect; at 5–15 users the traffic is tiny and human-shaped,
+which is exactly the shape the shared-fallback design is sound at.
 
 ## The probe
 
@@ -262,7 +287,8 @@ proxy own the public face.
 | --- | --- |
 | `src/index.ts` | startup, env, CORS fencing, the `POST /bridge` endpoint |
 | `src/dispatch.ts` | the method switch, the failure mapping, the static states, the fallback signing |
-| `src/fallback.ts` | the fallback credential: jar parsing, SAPISIDHASH, the account identity read |
+| `src/fallback.ts` | the fallback credential: jar parsing, SAPISIDHASH, sign(), rotation absorption and persist |
+| `src/keeper.ts` | the session keeper: the periodic homepage HEAD that harvests the rotations InnerTube never sends |
 | `src/contract.ts` | the bridge envelope, hand-mirrored from `web/shared/src/bridge/protocol.ts` (the relay takes no dependencies, and shared ships unbundled TS for bundlers) |
 | `src/hosts.ts` | the allowlists, the impersonation table, the pinned User-Agent, header sanitising |
 | `src/limits.ts` | the token bucket, body cap, response cap, upstream timeout |
