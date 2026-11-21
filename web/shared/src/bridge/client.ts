@@ -2,19 +2,21 @@ import {
   BRIDGE_CHANNEL,
   BRIDGE_PROTOCOL,
   EVENTS_PORT,
+  BridgeCallError,
   isBridgeEventMessage,
   isBridgeResponse,
-  type BridgeError,
   type BridgeEvent,
   type BridgeMethod,
   type BridgeRequest,
   type BridgeResponse,
+  type CallOptions,
   type ParamsOf,
   type ResultOf,
 } from './protocol';
+import { serverBridge } from './server';
 
 /**
- * Page-side bridge. Two transports behind one call (prompt §4.2):
+ * Page-side bridge. Three transports behind one call (prompt §4.2, relay.md):
  *
  * - **Chromium**: `externally_connectable` lets the page message the extension
  *   directly with `chrome.runtime.sendMessage(extensionId, …)`. Chrome only
@@ -22,9 +24,11 @@ import {
  *   page's origin, so its absence already means "not installed".
  * - **Firefox** has no `externally_connectable` for web pages. A content script
  *   on our origin relays `window.postMessage` ↔ `runtime.sendMessage`.
+ * - **Server**: `server.ts` speaks the same envelope to the `web/relay`
+ *   service over HTTP, for browsers that can't install anything at all.
  */
 export interface Bridge {
-  readonly transport: 'external' | 'relay';
+  readonly transport: 'external' | 'relay' | 'server';
   call<M extends BridgeMethod>(method: M, params: ParamsOf<M>, options?: CallOptions): Promise<ResultOf<M>>;
   /**
    * The extension's pushes (auth changes now, Discord status later). Returns
@@ -32,21 +36,6 @@ export interface Bridge {
    * its ports, so callers still re-read state when the tab regains focus.
    */
   subscribe(listener: (event: BridgeEvent) => void): () => void;
-}
-
-export interface CallOptions {
-  timeoutMs?: number;
-  signal?: AbortSignal;
-}
-
-export class BridgeCallError extends Error {
-  readonly code: BridgeError['code'] | 'timeout' | 'unavailable';
-
-  constructor(code: BridgeCallError['code'], message: string) {
-    super(message);
-    this.name = 'BridgeCallError';
-    this.code = code;
-  }
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -239,13 +228,20 @@ export interface DetectedExtension {
 export interface DetectOptions {
   /** The Chromium extension id (fixed by the manifest `key` in development). */
   chromiumExtensionId?: string | undefined;
+  /**
+   * The server relay's base URL (`web/relay`). Tried last: it serves the
+   * anonymous subset (no sign-in, no Spotify, no Discord), so an installed
+   * extension, which can do more, wins whenever one is there.
+   */
+  serverBridgeUrl?: string | undefined;
   /** How long to wait for a `ping` answer on each transport. */
   timeoutMs?: number;
 }
 
 /**
  * Finds the extension by pinging it: the external transport first when Chrome
- * exposes one, then the relay. Resolves `null` when nothing answers.
+ * exposes one, then the relay, then the server relay if its URL is configured.
+ * Resolves `null` when nothing answers.
  */
 export async function detectExtension(options: DetectOptions = {}): Promise<DetectedExtension | null> {
   const timeoutMs = options.timeoutMs ?? 1500;
@@ -253,6 +249,7 @@ export async function detectExtension(options: DetectOptions = {}): Promise<Dete
   const external = options.chromiumExtensionId ? externalBridge(options.chromiumExtensionId) : null;
   if (external) candidates.push(external);
   if (typeof window !== 'undefined') candidates.push(relayBridge(window));
+  if (options.serverBridgeUrl) candidates.push(serverBridge(options.serverBridgeUrl));
 
   for (const bridge of candidates) {
     try {

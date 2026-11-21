@@ -68,6 +68,9 @@ export default function SettingsPage() {
   const { setAutoplay, setCrossfade, setAutomix, setAutomixBars, setShowNerdStats } = usePlayer.getState();
   const [lyrics, setLyrics] = useState(false);
   const present = extension.state === 'present';
+  // The relay answering in the extension's place: AutoMix's Web Audio graph
+  // would be silent there, so the setting needs the extension (relay.md §5).
+  const relay = present && extension.extension.info.browser === 'server';
   const discordText =
     discord.state === 'ready' && discord.discord.connected
       ? discord.discord.enabled
@@ -91,7 +94,9 @@ export default function SettingsPage() {
           <div className={settingsUi.integration}>
             <Glyph Icon={SiSpotify} color="#1ed760" />
             <span className={settingsUi.integrationName}>Spotify</span>
-            {present ? <SpotifyIntegration /> : <span className={settingsUi.value}>Needs the extension</span>}
+            {/* The relay answers 'present' but can't hold a Spotify session, so
+              it's the extension's feature to ask for, not an old version's. */}
+            {present && !relay ? <SpotifyIntegration /> : <span className={settingsUi.value}>Needs the extension</span>}
           </div>
           {present && discord.state === 'ready' && discord.discord.available && (
             <LinkRow to="/settings/discord" icon={<Glyph Icon={SiDiscord} color="#5865f2" />} title="Discord" value={discordText} />
@@ -100,16 +105,18 @@ export default function SettingsPage() {
             to="/extension"
             icon={<Glyph Icon={MdOutlineExtension} color="#636366" />}
             title="BitChord Extension"
-            value={present ? `v${extension.extension.info.version}` : 'Not installed'}
+            value={present ? (relay ? 'Server relay connected' : `v${extension.extension.info.version}`) : 'Not installed'}
           />
         </section>
         <section className={`${settingsUi.group} mt-3 empty:hidden`}>
           <Toggle
             label="Share Listening Activity to YouTube"
             detail={
-              present && !extension.extension.info.capabilities.includes('yt.stats')
-                ? 'Update the BitChord extension to share: this version can’t send plays to YouTube.'
-                : 'Songs you play here go to your YouTube Music history and shape its recommendations.'
+              relay
+                ? 'Sharing needs the BitChord extension; the server relay plays anonymously.'
+                : present && !extension.extension.info.capabilities.includes('yt.stats')
+                  ? 'Update the BitChord extension to share: this version can’t send plays to YouTube.'
+                  : 'Songs you play here go to your YouTube Music history and shape its recommendations.'
             }
             checked={shareHistory}
             onChange={setShareHistory}
@@ -147,7 +154,14 @@ export default function SettingsPage() {
             onChange={setAutoplay}
           />
           <label className={settingsUi.controlRow}>
-            <span>Crossfade</span>
+            <span className={settingsUi.rowText}>
+              <span>Crossfade</span>
+              {relay && (
+                <span className={settingsUi.rowDetail}>
+                  AutoMix needs the BitChord extension; over the server relay only the timed volume crossfade plays.
+                </span>
+              )}
+            </span>
             <Select<number | 'automix'>
               label="Crossfade"
               value={automix ? 'automix' : crossfadeSec}

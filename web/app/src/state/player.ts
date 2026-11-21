@@ -182,9 +182,12 @@ function getDecks(): Promise<Deck[]> {
     decks = [0, 1].map((n) => {
       const audio = new Audio();
       audio.preload = 'auto';
-      // Media from another origin is silent inside an AudioContext unless it
-      // is fetched with CORS (prompt §6, the Web Audio caveat).
-      audio.crossOrigin = 'anonymous';
+      // crossOrigin is set per track by the engine, not once here: the Shaka
+      // paths keep 'anonymous' (media from another origin is silent inside an
+      // AudioContext unless fetched with CORS — prompt §6, the Web Audio
+      // caveat — and the extension's googlevideo rules answer it), while the
+      // relay's progressive path needs null, with which the element sends
+      // Origin and googlevideo answers 403 (relay.md §5).
       const engine = new YouTubeEngine(audio);
       const deck: Deck = { engine, audio, gain: 1 };
       engine.onFatal = (videoId, message) => {
@@ -244,6 +247,15 @@ let holding = false;
 function ensureAutomix(): Promise<AutomixGraph | null> {
   const all = decks;
   if (!all) return Promise.resolve(null);
+  // The server relay refuses the graph: its tracks play on a tainted element
+  // (no CORS on googlevideo, so Web Audio would output silence), and the
+  // analysis fetches googlevideo directly too. The element-volume crossfade
+  // still works below without the graph (relay.md §5); the extension is what
+  // AutoMix needs.
+  if (relayTransport()) {
+    trackLog.i('AutoMix is off over the server relay: its Web Audio graph would be silent. The extension can run it.');
+    return Promise.resolve(null);
+  }
   graphPromise ??= import('@/playback/automix').then(({ createAutomixGraph, analyzer }) => {
     const built = createAutomixGraph(
       all.map((d) => d.audio),
@@ -370,6 +382,11 @@ function syncAutomix() {
 function extensionReady(): boolean {
   const detected = queryClient.getQueryData<DetectedExtension | null>(extensionQueryKey);
   return !!detected?.info.capabilities.includes('yt');
+}
+
+/** Whether playback travels through the server relay rather than the extension (web/docs/relay.md). */
+function relayTransport(): boolean {
+  return queryClient.getQueryData<DetectedExtension | null>(extensionQueryKey)?.bridge.transport === 'server';
 }
 
 const artistNames = (track: Track) => track.artists.map((a) => a.name).join(', ');

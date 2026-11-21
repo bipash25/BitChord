@@ -18,7 +18,7 @@ export const EVENTS_PORT = 'bitchord-events';
 /** What the installed extension can do; `ping` reports it. */
 export type Capability = 'yt' | 'yt.auth' | 'yt.stats' | 'addon' | 'lyrics' | 'spotify' | 'discord';
 
-export type BrowserFamily = 'chromium' | 'firefox';
+export type BrowserFamily = 'chromium' | 'firefox' | 'server';
 
 /** A plain HTTP exchange, serialisable across the message channel. */
 export interface HttpRequest {
@@ -303,4 +303,21 @@ export function okResponse<M extends BridgeMethod>(id: string, result: ResultOf<
 
 export function errorResponse(id: string, code: BridgeErrorCode, message: string): BridgeResponse {
   return { channel: BRIDGE_CHANNEL, protocol: BRIDGE_PROTOCOL, direction: 'to-page', id, ok: false, error: { code, message } };
+}
+
+/** Options every transport accepts for a call. */
+export interface CallOptions {
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}
+
+/** A call that failed before the method ran, or the method's own refusal. */
+export class BridgeCallError extends Error {
+  readonly code: BridgeError['code'] | 'timeout' | 'unavailable';
+
+  constructor(code: BridgeCallError['code'], message: string) {
+    super(message);
+    this.name = 'BridgeCallError';
+    this.code = code;
+  }
 }

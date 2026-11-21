@@ -1,21 +1,30 @@
 import type { Innertube, Types } from 'youtubei.js/web';
-import { getBridge } from '@/extension/bridge';
+import type { Bridge } from '@bitchord/shared/bridge';
+import { getBridge, getBridgeWhenSettled } from '@/extension/bridge';
 import { ensureYtAuth, identityOf, noteMusicIdentity } from '@/extension/useYtAuth';
 import { trackLog } from '../trackLog';
 
 /**
  * The page's YouTube.js instance, created on first use (YouTube.js is large,
- * prompt §3). All of its requests leave from the browser itself; the
- * extension's declarativeNetRequest rules supply the YouTube headers
- * (web/extension/lib/rules.ts).
+ * prompt §3). All of its requests leave from the browser itself; the YouTube
+ * headers come from whichever transport answered detection — the extension's
+ * declarativeNetRequest rules (web/extension/lib/rules.ts) on the direct
+ * path, the server relay's impersonation over `yt.fetch` on the relay's
+ * (relay.md §3).
  */
 let instance: Promise<Innertube> | null = null;
 
 export function getInnertube(): Promise<Innertube> {
-  instance ??= create().catch((error: unknown) => {
-    instance = null;
-    throw error;
-  });
+  instance ??= getBridgeWhenSettled()
+    // The session's bootstrap (sw.js_data, the player script) races the
+    // extension detection on load — the home feed starts both at once — so
+    // wait for the first answer before building it. Per-request, sessionFetch
+    // re-reads the bridge: the transport may have been known only meanwhile.
+    .then(() => create())
+    .catch((error: unknown) => {
+      instance = null;
+      throw error;
+    });
   return instance;
 }
 
@@ -105,6 +114,62 @@ function decodeBase64(base64: string): Uint8Array<ArrayBuffer> {
   return Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
 }
 
+/**
+ * The session's fetch when the server relay is the transport (relay.md §3):
+ * every YouTube-host request — InnerTube calls, `sw.js_data`, the player
+ * script — travels as a bridge `yt.fetch`, which the relay performs with the
+ * YouTube headers a page isn't allowed to set and no CORS in the way. The
+ * text/plain "simple request" trick above only exists to dodge preflights on
+ * the direct path, so through the relay the session's own headers go along
+ * untouched (the relay drops the credential-shaped ones itself, relay.md
+ * "The contract").
+ */
+async function relayFetch(input: RequestInfo | URL, init: RequestInit | undefined, bridge: Bridge): Promise<Response> {
+  const request = input instanceof Request ? input : null;
+  const url = new URL(request ? request.url : input.toString());
+  // Only YouTube hosts travel through the relay: everything else the session
+  // touches is still fetched by the page, exactly as before.
+  if (!YOUTUBE_HOSTS.has(url.hostname)) return fetch(input, init);
+
+  const method = (init?.method ?? request?.method ?? 'GET').toUpperCase() as 'GET' | 'POST' | 'HEAD';
+  const headers: Record<string, string> = {};
+  new Headers(init?.headers ?? request?.headers).forEach((value, key) => (headers[key] = value));
+  let body = init?.body ?? undefined;
+  if (body === undefined && request && method !== 'GET' && method !== 'HEAD') body = await request.text();
+  // The session's bodies are JSON text; a browser can't set the forbidden
+  // headers (Referer, Cookie, User-Agent) anyway, so text is all there is.
+  if (body != null && typeof body !== 'string') body = await new Response(body).text();
+
+  const response = await bridge.call(
+    'yt.fetch',
+    {
+      url: url.toString(),
+      method,
+      ...(Object.keys(headers).length > 0 && { headers }),
+      ...(body != null && { body }),
+    },
+    { ...(init?.signal && { signal: init.signal }) },
+  );
+  const payload = response.bodyEncoding === 'base64' ? decodeBase64(response.body) : response.body;
+  return new Response(response.status === 204 || response.status === 304 ? null : payload, {
+    status: response.status,
+    headers: response.headers,
+  });
+}
+
+/**
+ * The fetch YouTube.js's anonymous session uses: the relay when the relay is
+ * the transport, the direct simple-request path otherwise. The transport is
+ * re-read on every request — the detection query can settle after the session
+ * has started building (warm() races them), and the session, once created, is
+ * reused for the page's lifetime.
+ */
+async function sessionFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const bridge = getBridge();
+  if (bridge?.transport === 'server') return relayFetch(input, init, bridge);
+  return simpleRequestFetch(input, init);
+}
+
 /** InnerTube calls through the extension, signed as the chosen channel; the rest as simpleRequestFetch. */
 async function signedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const request = input instanceof Request ? input : null;
@@ -141,7 +206,7 @@ async function isFirstRun(): Promise<boolean> {
   }
 }
 
-async function create(fetch: typeof globalThis.fetch = simpleRequestFetch): Promise<Innertube> {
+async function create(fetch: typeof globalThis.fetch = sessionFetch): Promise<Innertube> {
   const started = performance.now();
   const { Innertube, Platform, UniversalCache } = await import('youtubei.js/web');
 

@@ -60,7 +60,10 @@ export function usePublishedExtension(): PublishedExtension | null {
 export function useExtensionUpdate(): ExtensionUpdate {
   const extension = useExtension();
   const latest = usePublishedExtension();
-  if (!latest || extension.state !== 'present') return { state: 'unknown' };
+  // The server relay's version is the relay package's, not the extension's:
+  // no comparison means anything there, so no update notice. The Extension
+  // page recommends the extension itself when the relay is the transport.
+  if (!latest || extension.state !== 'present' || extension.extension.info.browser === 'server') return { state: 'unknown' };
   const installed = extension.extension.info.version;
   return compareVersions(latest.version, installed) > 0
     ? { state: 'available', installed, latest }

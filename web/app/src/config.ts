@@ -10,4 +10,10 @@ export const config = {
   androidAppUrl: import.meta.env.VITE_ANDROID_APP_URL || 'https://github.com/kushagrasinghx/BitChord/releases/latest',
   /** BitChord's Listen Together server. vite.config.ts refuses a production build without it. */
   partyServerUrl: import.meta.env.VITE_PARTY_SERVER_URL ?? '',
+  /**
+   * The server relay (web/docs/relay.md): the extension's anonymous work over
+   * HTTP, for browsers that can't install anything at all — every mobile
+   * browser. Empty means off; then only the extension (or nothing) can play.
+   */
+  relayUrl: import.meta.env.VITE_RELAY_URL ?? '',
 } as const;

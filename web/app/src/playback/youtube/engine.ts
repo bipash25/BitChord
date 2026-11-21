@@ -1,9 +1,10 @@
 import { SabrStreamingAdapter } from 'googlevideo/sabr-streaming-adapter';
 import { buildSabrFormat } from 'googlevideo/utils';
 import shaka from 'shaka-player/dist/shaka-player.compiled';
-import { Constants, Utils, YT, type Innertube } from 'youtubei.js/web';
+import { Constants, Utils, YT, type Innertube, type Misc } from 'youtubei.js/web';
 import { timed, trackLog } from '../trackLog';
 import { botguard } from './botguard';
+import { getBridge } from '@/extension/bridge';
 import { ytAuthSnapshot } from '@/extension/useYtAuth';
 import { getInnertube, getSignedInnertube } from './innertube';
 import {
@@ -42,8 +43,8 @@ export interface StreamStats {
   bitrateKbps: number | null;
   sampleRateHz: number | null;
   channels: number | null;
-  /** "direct" (googlevideo URLs, by range) or "SABR". */
-  mode: 'direct' | 'SABR';
+  /** "direct" (googlevideo URLs, by range), "SABR", or "progressive" (the element itself over the relay). */
+  mode: 'direct' | 'SABR' | 'progressive';
 }
 
 /** A music video's picture: a video-only DASH manifest over the same response's direct URLs. */
@@ -78,6 +79,11 @@ const FIRST_AUDIO_TIMEOUT_MS = 15_000;
  * when it has them (VISIONOS does, and that's what plays; see
  * web/docs/youtube-playback.md) and over SABR through googlevideo otherwise.
  *
+ * When the server relay is the transport (relay.md §4) there is no Shaka at
+ * all: a client with direct audio URLs plays progressively on the element
+ * itself — no MediaSource requirement, which is what makes iOS Safari possible
+ * — with the element's error event standing in for Shaka's (onElementError).
+ *
  * One engine, one `<audio>` element. Loading a new track supersedes whatever
  * was loading before. A client that fails to stream is excluded for the track
  * and the next one in the walk is tried, at the same position.
@@ -92,6 +98,8 @@ export class YouTubeEngine {
   private current: { videoId: string; client: PlayerClientName; signed: boolean } | null = null;
   /** The response the playing track streams from, when it has direct URLs; the video picture comes from it too. */
   private direct: ResolvedPlayer | null = null;
+  /** The playing track streams progressively from the element (relay mode), so the element's errors are ours to handle. */
+  private progressive = false;
   private preferredCodecs: string[];
 
   /** Raised when a track can't be played at all, after every fallback. */
@@ -101,6 +109,9 @@ export class YouTubeEngine {
 
   constructor(audio: HTMLAudioElement) {
     this.audio = audio;
+    // Relay mode has no Shaka between the element and googlevideo, so its own
+    // error event is how a mid-playback refusal arrives (onElementError).
+    audio.addEventListener('error', () => this.onElementError());
     // Opus (itag 251) when the browser can decode it in MSE, AAC (140)
     // otherwise, which is Safari: unsupported, but it must not crash.
     const opus = typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported('audio/webm; codecs="opus"');
@@ -159,15 +170,22 @@ export class YouTubeEngine {
   async load(videoId: string, { startSec = 0, autoplay = true } = {}): Promise<LoadedTrack> {
     const generation = ++this.generation;
     this.loading = true;
+    this.progressive = false;
     const started = performance.now();
     trackLog.i(`loading at ${startSec.toFixed(1)}s`, videoId);
     try {
-      const player = await this.ensurePlayer();
+      // Relay mode never builds the Shaka player — no MediaSource, so iOS
+      // Safari can play at all (relay.md §4).
+      const relay = isRelayMode();
+      const player = relay ? null : await this.ensurePlayer();
       this.yt ??= await timed('InnerTube session', videoId, getInnertube);
       void botguard.init().catch((error: unknown) => trackLog.w(`BotGuard init failed: ${String(error)}`, videoId));
 
       const skip = new Set<PlayerClientName>();
       let lastError: unknown = null;
+      // Every client answered, but only with SABR URLs, which the relay can't
+      // play: the final message must say what would (the extension).
+      let sabrOnly = false;
       let yt = this.yt;
       let signed = false;
       for (let attempt = 0; attempt < CLIENT_ATTEMPTS; attempt++) {
@@ -186,8 +204,18 @@ export class YouTubeEngine {
           continue;
         }
         this.checkCurrent(generation);
+        if (relay && !hasDirectAudio(resolved.info)) {
+          // A SABR-only response (the web clients): it plays through Shaka and
+          // the extension's googlevideo rules, neither of which the relay has.
+          sabrOnly = true;
+          skip.add(resolved.client);
+          excludeClient(videoId, resolved.client, 'SABR only: the relay plays direct URLs', resolved.signed);
+          continue;
+        }
         try {
-          const track = await this.startStream(player, resolved, startSec, autoplay, generation);
+          const track = relay
+            ? await this.startProgressive(resolved, startSec, autoplay, generation)
+            : await this.startStream(player!, resolved, startSec, autoplay, generation);
           trackLog.i(
             `playing via ${track.client}, ${track.format}, first audio after ${Math.round(performance.now() - started)}ms`,
             videoId,
@@ -199,6 +227,9 @@ export class YouTubeEngine {
           skip.add(resolved.client);
           excludeClient(videoId, resolved.client, `streaming failed: ${describe(error)}`, resolved.signed);
         }
+      }
+      if (relay && sabrOnly) {
+        throw new Error('This track only streams over SABR, which the server relay can’t play. The BitChord extension can.');
       }
       throw lastError instanceof Error ? lastError : new Error('No YouTube client could stream this track');
     } catch (error) {
@@ -228,6 +259,12 @@ export class YouTubeEngine {
     this.adapter = null;
     this.current = { videoId, client, signed };
     this.direct = null;
+    this.progressive = false;
+
+    // CORS-clean for the Web Audio graph (Automix, EQ): the extension's
+    // googlevideo rules answer CORS headers. The relay's progressive path
+    // needs null instead — see startProgressive.
+    this.audio.crossOrigin = 'anonymous';
 
     const direct = hasDirectAudio(info);
     const manifest = direct ? await this.directManifest(resolved) : await this.sabrManifest(player, resolved);
@@ -267,6 +304,111 @@ export class YouTubeEngine {
       stream: { ...selected.stats, mode },
       loudnessDb: info.player_config?.audio_config?.loudness_db ?? null,
     };
+  }
+
+  /**
+   * Relay mode's playback (relay.md §4): the chosen audio format's deciphered
+   * URL on the element itself. No Shaka and no MediaSource — a plain
+   * progressive element is the one thing every mobile browser, iOS Safari
+   * included, can do. The price is Web Audio: with crossOrigin unset the
+   * element can't enter an AudioContext (cross-origin media is silent there),
+   * so Automix and the Web-Audio crossfade are off in relay mode
+   * (player.ensureAutomix refuses), and the volume-fade crossfade carries on
+   * by element volume alone.
+   */
+  private async startProgressive(
+    resolved: ResolvedPlayer,
+    startSec: number,
+    autoplay: boolean,
+    generation: number,
+  ): Promise<LoadedTrack> {
+    const { videoId, client, info, yt } = resolved;
+    const audio = this.audio;
+
+    // Shaka must not be holding the element (a transport change since an
+    // earlier load is the only way that can happen): release it, or its next
+    // load would fight the src assignment below.
+    if (this.player) {
+      await this.player.detach().catch(() => {});
+      this.player = null;
+    }
+    this.adapter?.dispose();
+    this.adapter = null;
+    this.current = { videoId, client, signed: resolved.signed };
+    this.direct = null;
+    this.progressive = true;
+
+    const format = this.pickProgressiveFormat(info);
+    if (!format) throw new Error('no audio format with a direct URL');
+    // What toDash does for every format it renders, with the session's player.
+    const deciphered = await format.decipher(yt.session.player);
+    if (!deciphered) throw new Error(`${client} returned no decipherable audio URL`);
+    const url = new URL(deciphered);
+    // BotGuard clients attach the streaming token to the media URL, exactly
+    // as directManifest's url_transformer does for the Shaka path.
+    const pot = usesWebPo(client) ? await botguard.mint(videoId) : undefined;
+    if (pot) url.searchParams.set('pot', pot);
+
+    // null, not 'anonymous': with it the element sends Origin and googlevideo
+    // answers 403 (relay.md §5) — and the Web Audio it enabled was the first
+    // thing relay mode gave up.
+    audio.crossOrigin = null;
+    audio.src = url.toString();
+    // At HAVE_NOTHING this becomes the element's official playback start
+    // position, applied once the metadata arrives.
+    audio.currentTime = startSec;
+    this.checkCurrent(generation);
+
+    if (autoplay) {
+      await audio.play().catch((error: unknown) => {
+        // Autoplay without a gesture is refused; the track is loaded and the
+        // play button will start it.
+        if (error instanceof DOMException && error.name === 'NotAllowedError') {
+          trackLog.w('autoplay was blocked by the browser; waiting for a tap', videoId);
+        } else throw error;
+      });
+    }
+    await this.firstAudio(generation);
+    this.checkCurrent(generation);
+
+    const selection = progressiveSelection(format);
+    const basic = info.basic_info;
+    return {
+      videoId,
+      title: basic.title ?? '',
+      author: basic.author ?? '',
+      durationSec: basic.duration ?? (Number.isFinite(audio.duration) ? Math.round(audio.duration) : 0),
+      thumbnails: [...(basic.thumbnail ?? [])]
+        .map((t) => ({ url: t.url, width: t.width, height: t.height }))
+        .sort((a, b) => b.width - a.width),
+      client,
+      format: `${selection.label} progressive`,
+      stream: { ...selection.stats, mode: 'progressive' },
+      loudnessDb: info.player_config?.audio_config?.loudness_db ?? null,
+    };
+  }
+
+  /**
+   * Relay mode's audio format: Opus (itag 251 at the top of its ladder) when
+   * the element itself can decode it, AAC (140) otherwise — the same choice
+   * as selectAudio, but answered by the element's progressive decoding rather
+   * than MSE, and on the response's own formats rather than Shaka's tracks.
+   */
+  private pickProgressiveFormat(info: YT.VideoInfo): Misc.Format | null {
+    const codecs = ['maybe', 'probably'].includes(this.audio.canPlayType('audio/webm; codecs="opus"'))
+      ? ['opus', 'mp4a']
+      : ['mp4a'];
+    // hasAudio was checked before this; the URL check skips URL-less entries
+    // (SABR formats), is_drc the DRC renditions, as selectAudio does.
+    const candidates = (info.streaming_data?.adaptive_formats ?? []).filter(
+      (f) => f.has_audio && !f.has_video && !f.is_drc && (f.url || f.signature_cipher || f.cipher),
+    );
+    for (const codec of codecs) {
+      const best = candidates.filter((f) => f.mime_type.includes(codec)).sort((a, b) => b.bitrate - a.bitrate)[0];
+      if (best) return best;
+    }
+    // Nothing in the wanted families (an exotic codec): the best of what's there.
+    return candidates.sort((a, b) => b.bitrate - a.bitrate)[0] ?? null;
   }
 
   /**
@@ -312,6 +454,9 @@ export class YouTubeEngine {
    * manifest cut down to them.
    */
   async videoStream(height: number | null = null): Promise<VideoStream | null> {
+    // The picture needs Shaka + DASH, which relay mode never builds: the song
+    // artwork shows instead, as it already does for art tracks (relay.md §6).
+    if (isRelayMode()) return null;
     const resolved = this.direct;
     if (!resolved) return null;
     const { videoId, client, info } = resolved;
@@ -421,17 +566,30 @@ export class YouTubeEngine {
     const audio = this.audio;
     if (audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) return Promise.resolve();
     return new Promise((resolve, reject) => {
-      const done = () => {
+      const clean = () => {
         clearTimeout(timer);
         audio.removeEventListener('canplay', done);
+        audio.removeEventListener('error', onError);
+      };
+      const done = () => {
+        clean();
         if (generation !== this.generation) reject(new SupersededError('Replaced by a newer load'));
         else resolve();
       };
+      const onError = () => {
+        // The progressive path has no Shaka between the element and the
+        // server: a refused URL surfaces as the element's own error event, so
+        // the wait ends here rather than running out the clock.
+        if (!this.progressive) return;
+        clean();
+        reject(new Error(describeMediaError(audio.error)));
+      };
       const timer = setTimeout(() => {
-        audio.removeEventListener('canplay', done);
+        clean();
         reject(new Error(`no audio within ${FIRST_AUDIO_TIMEOUT_MS / 1000}s`));
       }, FIRST_AUDIO_TIMEOUT_MS);
       audio.addEventListener('canplay', done);
+      audio.addEventListener('error', onError);
     });
   }
 
@@ -464,10 +622,52 @@ export class YouTubeEngine {
       });
   }
 
+  /**
+   * The progressive path's mid-playback refusal (relay.md §4): the element's
+   * error event, where the Shaka path would have raised one. Same recovery as
+   * onShakaError — exclude the client, reload at the same position on the
+   * next client that still yields direct URLs.
+   */
+  private onElementError() {
+    const current = this.current;
+    if (!this.progressive || !current) return;
+    const error = this.audio.error;
+    const line = `element error: ${describeMediaError(error)}`;
+    // A decode error is the browser's, not the client's; only HTTP-shaped
+    // failures (a refused URL, a dropped network) move the walk.
+    if (!error || !HTTP_CAUSED_MEDIA_ERRORS.has(error.code)) {
+      trackLog.d(line, current.videoId);
+      return;
+    }
+    trackLog.w(line, current.videoId);
+    if (this.loading) return;
+    // Recover once per track and client; later errors from the same stream are echoes.
+    this.progressive = false;
+    excludeClient(current.videoId, current.client, line, current.signed);
+    const resumeAt = this.audio.currentTime;
+    const wasPlaying = !this.audio.paused;
+    this.load(current.videoId, { startSec: resumeAt, autoplay: wasPlaying })
+      .then((track) => this.onRecovered(track))
+      .catch((failure: unknown) => {
+        if (failure instanceof SupersededError) return;
+        void this.stop();
+        this.onFatal(current.videoId, describe(failure), failure instanceof UnplayableError);
+      });
+  }
+
   async stop(): Promise<void> {
     this.generation++;
     this.current = null;
     this.direct = null;
+    if (this.progressive) {
+      // Nothing else will: a progressive track has no Shaka load whose
+      // unload() would stop the element, so a superseded deck (a crossfade
+      // given up on, a track skipped) keeps sounding without this.
+      this.audio.pause();
+      this.audio.removeAttribute('src');
+      this.audio.load();
+    }
+    this.progressive = false;
     await this.player?.unload();
     this.adapter?.dispose();
     this.adapter = null;
@@ -482,6 +682,48 @@ function codecName(codec: string | null): string | null {
   if (codec.startsWith('ec-3')) return 'E-AC-3';
   if (codec.startsWith('ac-3')) return 'AC-3';
   return codec.toUpperCase();
+}
+
+/** Whether playback travels through the server relay rather than the extension (web/docs/relay.md). */
+function isRelayMode(): boolean {
+  return getBridge()?.transport === 'server';
+}
+
+/** A progressive format's codec, from its mime type's `codecs="…"` parameter. */
+const CODEC_IN_MIME = /codecs="([^"]+)"/;
+
+/** The progressive path's pick of the audio format, as selectAudio reports the Shaka path's. */
+function progressiveSelection(format: Misc.Format): { label: string; stats: Omit<StreamStats, 'mode'> } {
+  const codec = CODEC_IN_MIME.exec(format.mime_type)?.[1] ?? '';
+  // The family name ("mp4a"), as selectAudio's label uses, not the full profile.
+  const family = codec.split('.')[0]!;
+  const itag = String(format.itag);
+  const kbps = Math.round(format.bitrate / 1000);
+  return {
+    label: `${itag} ${family} ${kbps}kbps`,
+    stats: {
+      codec: codecName(codec),
+      itag,
+      bitrateKbps: kbps || null,
+      sampleRateHz: format.audio_sample_rate ? Math.round(Number(format.audio_sample_rate)) : null,
+      channels: format.audio_channels ?? null,
+    },
+  };
+}
+
+/**
+ * Media error codes an HTTP cause produces on a progressive element: a
+ * refused URL (googlevideo's 403) surfaces as SRC_NOT_SUPPORTED, a dropped
+ * connection as NETWORK. A decode error (3) is the browser's, not the
+ * client's, and an abort (1) is ours.
+ */
+const HTTP_CAUSED_MEDIA_ERRORS = new Set<number>([MediaError.MEDIA_ERR_NETWORK, MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED]);
+
+const MEDIA_ERROR_NAMES = ['aborted', 'network', 'decode', 'src not supported'] as const;
+
+function describeMediaError(error: MediaError | null): string {
+  if (!error) return 'the element reported no error detail';
+  return `media error ${MEDIA_ERROR_NAMES[error.code - 1] ?? error.code}`;
 }
 
 /** Whether the response carries audio URLs to fetch directly (VISIONOS does; the web clients only offer SABR). */

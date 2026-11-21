@@ -23,12 +23,16 @@ const SLOW_RECHECK_MS = 5000;
  * strand everything that reads the bridge (history reporting, lyrics) until a
  * reload. A bridge is only a function over chrome.runtime, so it recovers on
  * its own when the worker is back; a removed extension fails each call instead.
+ *
+ * The server relay is the last candidate inside detectExtension, so an
+ * installed extension — which can do more — always wins over it.
  */
-async function detect(): Promise<DetectedExtension | null> {
+export async function detect(): Promise<DetectedExtension | null> {
   const known = queryClient.getQueryData<DetectedExtension | null>(extensionQueryKey) ?? null;
-  const found = await detectExtension({ chromiumExtensionId: config.chromiumExtensionId });
+  const base = { chromiumExtensionId: config.chromiumExtensionId, serverBridgeUrl: config.relayUrl || undefined };
+  const found = await detectExtension(base);
   if (found || !known) return found;
-  return (await detectExtension({ chromiumExtensionId: config.chromiumExtensionId, timeoutMs: 4000 })) ?? known;
+  return (await detectExtension({ ...base, timeoutMs: 4000 })) ?? known;
 }
 
 /**

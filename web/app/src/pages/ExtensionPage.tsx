@@ -102,6 +102,12 @@ function youtubeStatus(auth: YtAuthStatus): string | null {
 function integrationStatus(status: ExtensionStatus, integration: Integration, auth: YtAuthStatus): string {
   if (status.state === 'checking') return 'Checking…';
   if (status.state === 'missing') return 'Needs the extension';
+  // The server relay is the transport: it serves the anonymous half only and
+  // holds nothing by design (relay.md), so identity features stay
+  // extension-only and the page keeps saying so.
+  if (status.extension.info.browser === 'server') {
+    return integration.capability === 'yt' ? 'Playing anonymously · sign-in needs the extension' : 'Needs the extension';
+  }
   if (!status.extension.info.capabilities.includes(integration.capability)) return 'Not available in this version yet';
   return (integration.capability === 'yt' && youtubeStatus(auth)) || integration.ready;
 }
@@ -118,6 +124,9 @@ export default function ExtensionPage() {
     status.state === 'present' ? (status.extension.info.browser === 'firefox' ? 'firefox' : 'chrome') : null;
   const forUpdate = DOWNLOADS.find((d) => d.browser === (installedBrowser ?? currentBrowser))!;
   const steps = DOWNLOADS.find((d) => d.browser === chosen)?.steps;
+  // The relay answering the ping in the extension's place (relay.md §7): the
+  // page names what is actually connected rather than "Installed".
+  const relay = status.state === 'present' && status.extension.info.browser === 'server';
 
   return (
     <div className={settingsUi.centered}>
@@ -129,12 +138,18 @@ export default function ExtensionPage() {
             <span className={settingsUi.value}>
               {status.state === 'checking' && 'Checking…'}
               {status.state === 'missing' && 'Not installed'}
-              {status.state === 'present' && (
-                <>
-                  <span className={settingsUi.dot} aria-hidden="true" />
-                  Installed · v{status.extension.info.version}
-                </>
-              )}
+              {status.state === 'present' &&
+                (relay ? (
+                  <>
+                    <span className={settingsUi.dot} aria-hidden="true" />
+                    Server relay · anonymous playback
+                  </>
+                ) : (
+                  <>
+                    <span className={settingsUi.dot} aria-hidden="true" />
+                    Installed · v{status.extension.info.version}
+                  </>
+                ))}
             </span>
           </div>
           {update.state !== 'unknown' && (
@@ -150,8 +165,8 @@ export default function ExtensionPage() {
             <div className={settingsUi.row}>
               <span>Connection</span>
               <span className={settingsUi.value}>
-                {status.extension.bridge.transport === 'external' ? 'Direct' : 'Page relay'} ·{' '}
-                {status.extension.info.browser === 'firefox' ? 'Firefox' : 'Chromium'}
+                {status.extension.bridge.transport === 'external' ? 'Direct' : relay ? 'Server relay' : 'Page relay'}
+                {!relay && ` · ${status.extension.info.browser === 'firefox' ? 'Firefox' : 'Chromium'}`}
               </span>
             </div>
           )}
@@ -187,6 +202,13 @@ export default function ExtensionPage() {
           The extension does the networking and sign-in work a web page isn’t allowed to do. Addons and most lyric
           providers work without it.
         </p>
+        {relay && (
+          <p className={settingsUi.footer}>
+            You’re connected through the server relay: playback, search, lyrics and addons work anonymously, and the
+            audio flows between your browser and YouTube directly. The extension adds YouTube sign-in, Spotify,
+            Discord, AutoMix and music-video playback.
+          </p>
+        )}
 
         <h2 className={settingsUi.sectionHeader}>Get the extension</h2>
         <section className={settingsUi.group}>

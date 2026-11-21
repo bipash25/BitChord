@@ -1,0 +1,22 @@
+{
+  "name": "@bitchord/relay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The BitChord server relay (web/docs/relay.md): the extension's anonymous YouTube work, served over HTTP for browsers that cannot install one.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p .",
+    "test": "vitest run",
+    "probe": "node scripts/probe.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.4",
+    "youtubei.js": "^18.1.0"
+  }
+}
