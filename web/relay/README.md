@@ -121,20 +121,24 @@ Creating the burner, once:
    history"), so nothing the relay plays shapes the account or marks it
    interesting.
 3. Export the session as a cookies.txt with a browser extension ("Get
-   cookies.txt" and friends) while signed in, then **sign out of that browser
-   (or close the profile) immediately**. The file the relay wants is the
-   `youtube.com` / `google.com` rows — `SID`, `HSID`, `SSID`, `SAPISID`, the
-   `__Secure-*` family (HttpOnly rows included; the parser reads them). A raw
-   `Cookie:` header line copied from devtools works too.
-   The sign-out matters more than it looks: Google rotates the session's
-   timestamp cookies (`__Secure-1PSIDTS` and friends) roughly every fifteen
-   minutes, and whichever side stays signed in keeps rotating the other
-   side's copy out from under it — a static export measured dead within half
-   an hour of resolving tracks fine (yt-dlp's "no longer valid; likely
-   rotated in the browser", 2026-11-21). The export only seeds the jar: the
-   relay is the one making the account's calls from here on, so it absorbs
-   the rotations YouTube sends back and persists them to the same file, and
-   the session lives as long as the relay keeps running.
+   cookies.txt" and friends) while signed in, then **quit the browser
+   entirely — without signing out** (signing out invalidates the session
+   on Google's side and the export is dead on arrival; a quit browser
+   keeps the session parked and stops rotating it). The file the relay
+   wants is the
+   `youtube.com` / `google.com` rows — `SID`, `HSID`, `SSID`, `SAPISID`,
+   the `__Secure-*` family (HttpOnly rows included; the parser reads
+   them). A raw `Cookie:` header line copied from devtools works too.
+   The quit matters more than it looks: Google rotates the session's
+   timestamp cookies (`__Secure-1PSIDTS` and friends) roughly every
+   fifteen minutes, and whichever side stays active keeps rotating the
+   other side's copy out from under it — a static export measured dead
+   within half an hour of resolving tracks fine (yt-dlp's "no longer
+   valid; likely rotated in the browser", 2026-11-21). The export only
+   seeds the jar: the relay is the one making the account's calls from
+   here on, so it absorbs the rotations YouTube sends back and persists
+   them to the same file, and the session lives as long as the relay
+   keeps running.
 4. Put it somewhere the relay can read and the repo cannot — mode 600, owned
    by the relay's user:
 

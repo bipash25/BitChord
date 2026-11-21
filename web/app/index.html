@@ -7,6 +7,27 @@
       // exactly), so www goes there before anything loads, keeping its path and query.
       if (location.hostname === 'www.bitchord.in') location.replace('https://bitchord.in' + location.pathname + location.search + location.hash);
     </script>
+    <script>
+      // crypto.randomUUID exists only in secure contexts (HTTPS or localhost);
+      // over plain HTTP the app crashed on load (measured 2026-11-21, the
+      // phone trial). getRandomValues is available everywhere, so fill the gap
+      // before the bundle runs — it covers the app's calls and any dependency's.
+      if (!crypto.randomUUID) {
+        crypto.randomUUID = function () {
+          var bytes = crypto.getRandomValues(new Uint8Array(16));
+          bytes[6] = (bytes[6] & 0x0f) | 0x40;
+          bytes[8] = (bytes[8] & 0x3f) | 0x80;
+          var hex = Array.prototype.map
+            .call(bytes, function (b) {
+              return b.toString(16).padStart(2, '0');
+            })
+            .join('');
+          return (
+            hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-' + hex.slice(12, 16) + '-' + hex.slice(16, 20) + '-' + hex.slice(20)
+          );
+        };
+      }
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#1f1f1f" />
