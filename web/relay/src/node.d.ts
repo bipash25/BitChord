@@ -55,7 +55,7 @@ declare module 'node:http' {
     /** Where the connection came from; the per-IP rate limit is keyed on it. */
     socket?: { remoteAddress?: string | undefined } | undefined;
     on(event: 'data', listener: (chunk: Uint8Array) => void): this;
-    on(event: 'end', listener: () => void): this;
+    on(event: 'end' | 'close', listener: () => void): this;
     on(event: 'error', listener: (error: Error) => void): this;
     destroy(): void;
   }
@@ -64,10 +64,16 @@ declare module 'node:http' {
     statusCode: number;
     /** Whether anything was already written, so an error path doesn't try to answer twice. */
     readonly headersSent: boolean;
+    /** Whether the underlying response stream was torn down (client disconnect or mid-stream abort). */
+    readonly destroyed: boolean;
     writeHead(status: number, headers?: Record<string, string | number | string[]>): this;
     setHeader(name: string, value: string | number | readonly string[]): this;
     write(chunk: string | Uint8Array): boolean;
     end(data?: string | Uint8Array): this;
+    destroy(): this;
+    on(event: 'drain' | 'close', listener: () => void): this;
+    once(event: 'drain' | 'close', listener: () => void): this;
+    removeListener(event: 'drain' | 'close', listener: () => void): this;
   }
 
   export class Server {

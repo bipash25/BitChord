@@ -21,9 +21,13 @@ From `relay.md`'s probe matrix, re-verified by hand on 2026-11-21:
   Google's 403 "automated queries" page. A web page can send the requests
   but can never read the answers; this is why the relay (or the extension)
   must make the API calls at all.
-- **Audio bytes flow browser ↔ googlevideo directly** — already true in
-  relay mode; the media element fetches from the *user's* IP, no CORS
-  needed for plain playback.
+- **Audio bytes need a bounded range-proxy (`GET /media?u=…`)** — originally
+  assumed unnecessary because the acceptance probe's bounded `Range:
+  bytes=0-131071` answered 206, whereas a real browser `<audio>` element sends
+  open-ended `Range: bytes=0-`, which googlevideo rejects on `c=WEB_REMIX` URLs
+  with HTTP 403 while refusing `Range` CORS preflights with HTTP 400 (measured
+  below). At 5–15 listeners (~2 Mbps ceiling), splitting open ranges on the
+  relay costs negligible bandwidth.
 - **Anonymous `player` is refused from datacenter egress, period** — the
   VPS, Cloudflare Workers, and genuine PO tokens were all measured and all
   answered "Sign in to confirm you're not a bot". A signed-in session is
@@ -229,3 +233,44 @@ verdict). Implementation note for whichever lands last: the fallback
 needs no `auth: true` round-trip — signed-in callers already carry their
 own `Authorization: Bearer`, so the relay can sign the *anonymous* player
 call with the fallback credential whenever one is configured.
+
+## Media serving — why the bounded range-proxy landed
+
+Reversing `relay.md`'s earlier "deliberately not built" decision, measured on
+the live trial (`Xi8Fabcb_MA`, itag 251, `clen=1821403`):
+
+1. **`VISIONOS_0_1` cannot carry the fallback session.** Tested against both
+   InnerTube origins with Android's `VISIONOS_0_1` client (`0.1`, `VISION_OS`,
+   `RealityDevice14,1`, `MOBILE`): signed `music.youtube.com/youtubei/v1/player`
+   and signed `www.youtube.com/youtubei/v1/player` both answer HTTP 400
+   `"Request contains an invalid argument."`, matching `VISIONOS` 1.02; unsigned
+   `VISIONOS_0_1` on `music.youtube.com` answers HTTP 200 `UNPLAYABLE` ("Sign in
+   to confirm you're not a bot"). `VISIONOS` therefore stays unsigned across
+   every shape, and fallback-signed `YTMUSIC` (`c=WEB_REMIX`, with no
+   player-request `poToken`) is the client that returns direct audio URLs.
+2. **A browser `<audio>` element cannot play `c=WEB_REMIX` URLs directly.** The
+   acceptance probe tested `Range: bytes=0-131071` (bounded) and got HTTP 206,
+   but an `<audio>` element can only open progressive playback with `Range:
+   bytes=0-` (open-ended), which googlevideo rejects on `c=WEB_REMIX` URLs with
+   HTTP 403 (`MEDIA_ERR_SRC_NOT_SUPPORTED`). Splitting ranges in page `fetch()`
+   is blocked too: googlevideo answers the `Range` CORS preflight with HTTP 400.
+3. **Private-deployment scope makes `GET /media?u=<googlevideo-url>` cheap and
+   fenced.** At 5–15 listeners (~2 Mbps peak), the public-scale 150 Mbps / 1000
+   listeners objection does not apply. `web/relay/src/media.ts` validates
+   `https://[*.]googlevideo.com/videoplayback` strictly, applies the per-IP
+   token bucket, attaches no server credentials (`credentials: 'omit'`), and
+   translates open `Range: bytes=0-` (and seek ranges) into sequential 256 KB
+   bounded upstream `206` fetches streamed back with `Content-Range` and
+   `Content-Length` (mirroring Android's `ChunkedDataSource.kt`).
+4. **BotGuard `GenerateIT` and the ~768 KB `c=WEB_REMIX` wall.** `hosts.ts`
+   previously dropped every `x-goog-*` header including the public
+   `x-goog-api-key`, making `GenerateIT` fail with HTTP 403 ("Permission denied
+   on the service"); preserving `x-goog-api-key` restores HTTP 200 and lets
+   `startProgressive` attach the page-minted `pot`. Even with a valid browser
+   `pot` (tested across `Create`+`GenerateIT`, homepage `ytcfg`+`ytAtN`,
+   `videoId`, `visitorData`, and `datasyncId` bindings), `c=WEB_REMIX` streams
+   still hit googlevideo's `sps=2` 403 wall at byte `786,432` (~45–60 s, the
+   open WebPO issue in `web/docs/youtube-playback.md`). Separately measured via
+   `yt-dlp`, signed `tv_samsung` (`c=TVHTML5`, Tizen UA) serves the full
+   1.82 MB file (`Range: bytes=0-` and `bytes=1400000-1821402` both HTTP 206,
+   no PO token) if full-length fallback client support is needed next.

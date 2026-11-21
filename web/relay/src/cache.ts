@@ -8,8 +8,10 @@ import type { HttpResponse } from './contract.js';
  * which also softens the datacenter-IP problem every relay deployment has.
  *
  * TTLs per family:
- * - `sw.js_data`, `/iframe_api` and the player script: 10 min. Session
- *   bootstrap cost, changing slowly.
+ * - `/iframe_api` and the player script: 10 min. Session bootstrap cost,
+ *   changing slowly. `sw.js_data` is deliberately excluded: caching it handed
+ *   one shared `visitorData` across every listener, whereas Android's
+ *   InnerTubeX treats per-session visitor data as load-bearing.
  * - `youtubei` JSON: 2 min. Fresh enough that browse and search don't serve
  *   yesterday, cached enough that a page reload doesn't re-ask.
  * - addon manifests: 5 min. The servers' own JSON indexes.
@@ -36,8 +38,8 @@ const DEFAULT_CAPACITY = 512;
  */
 const DEFAULT_BYTE_BUDGET = 64 * 1024 * 1024;
 
-/** The static part of a session bootstrap: sw.js_data, iframe_api, the player script. */
-const YT_STATIC = /^https:\/\/www\.youtube\.com\/((sw\.js_data|iframe_api)(\?|$)|s\/player\/)/;
+/** The static part of a session bootstrap: iframe_api and the player script (never sw.js_data, which carries per-session visitorData). */
+const YT_STATIC = /^https:\/\/www\.youtube\.com\/(iframe_api(\?|$)|s\/player\/)/;
 /** InnerTube API calls on either YouTube origin. */
 const YT_INNERTUBE = /^https:\/\/(music|www)\.youtube\.com\/youtubei\//;
 

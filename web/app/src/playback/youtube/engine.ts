@@ -4,6 +4,7 @@ import shaka from 'shaka-player/dist/shaka-player.compiled';
 import { Constants, Utils, YT, type Innertube, type Misc } from 'youtubei.js/web';
 import { timed, trackLog } from '../trackLog';
 import { botguard } from './botguard';
+import { config } from '@/config';
 import { ytAuthSnapshot } from '@/extension/useYtAuth';
 import { getInnertube, getSignedInnertube } from './innertube';
 import {
@@ -159,10 +160,10 @@ export class YouTubeEngine {
   /** Pays the cold costs before the first tap (InnerTubeXResolver.warm): the session, the player script, BotGuard. */
   async warm(): Promise<void> {
     this.yt ??= await getInnertube();
-    // Relay mode mints no tokens — playerRequest and startProgressive both
-    // skip them — so BotGuard's Create/GenerateIT round-trips would be pure
-    // waste: the page's interpreter fetch plus a relayed GenerateIT.
-    if (isRelayMode()) return;
+    // Relay mode still skips player-request PO tokens (playerRequest, so
+    // YTMUSIC keeps returning direct audio URLs rather than SABR-only), while
+    // BotGuard warms for the streaming `pot` startProgressive attaches to
+    // WEBPO media URLs.
     await botguard.init().catch((error: unknown) => trackLog.w(`BotGuard warm-up failed: ${String(error)}`));
   }
 
@@ -183,9 +184,7 @@ export class YouTubeEngine {
       const relay = isRelayMode();
       const player = relay ? null : await this.ensurePlayer();
       this.yt ??= await timed('InnerTube session', videoId, getInnertube);
-      // Same relay-mode skip as warm(): with no token ever minted there,
-      // BotGuard has nothing to do.
-      if (!relay) void botguard.init().catch((error: unknown) => trackLog.w(`BotGuard init failed: ${String(error)}`, videoId));
+      void botguard.init().catch((error: unknown) => trackLog.w(`BotGuard init failed: ${String(error)}`, videoId));
 
       const skip = new Set<PlayerClientName>();
       let lastError: unknown = null;
@@ -235,7 +234,11 @@ export class YouTubeEngine {
           excludeClient(videoId, resolved.client, `streaming failed: ${describe(error)}`, resolved.signed);
         }
       }
-      if (relay && sabrOnly) {
+      // Only say "SABR only" when no client reached streaming at all: if an
+      // earlier client returned direct URLs and failed on the media hop
+      // (`lastError` is set) before a later fallback answered SABR-only,
+      // throwing the SABR message would mask the real streaming error.
+      if (relay && sabrOnly && !lastError) {
         throw new Error('This track only streams over SABR, which the server relay’s playback can’t handle.');
       }
       throw lastError instanceof Error ? lastError : new Error('No YouTube client could stream this track');
@@ -351,15 +354,21 @@ export class YouTubeEngine {
     const deciphered = await format.decipher(yt.session.player);
     if (!deciphered) throw new Error(`${client} returned no decipherable audio URL`);
     const url = new URL(deciphered);
-    // No `pot` on the URL, unlike directManifest's Shaka path: the signed
-    // URL serves without one (the probe's 206 range-fetches measured exactly
-    // this hop), and no BotGuard runs in relay mode to mint it.
+    // BotGuard clients attach the streaming token to the media URL, matching
+    // directManifest's url_transformer (`pot`, bound to the videoId).
+    // playerRequest still omits the player-request token in relay mode so
+    // YTMUSIC keeps returning direct URLs rather than SABR-only.
+    const pot = usesWebPo(client) ? await botguard.mint(videoId) : undefined;
+    if (pot) url.searchParams.set('pot', pot);
 
-    // null, not 'anonymous': with it the element sends Origin and googlevideo
-    // answers 403 (relay.md §5) — and the Web Audio it enabled was the first
-    // thing relay mode gave up.
+    // null, not 'anonymous': Automix and the Web Audio graph stay off in relay
+    // mode, and leaving crossOrigin unset avoids requiring CORS when
+    // VITE_RELAY_URL is on another port in local dev. The stream travels
+    // through the relay's `/media?u=…` bounded range-proxy because the element
+    // sends open `Range: bytes=0-`, which googlevideo rejects on `c=WEB_REMIX`
+    // URLs with HTTP 403.
     audio.crossOrigin = null;
-    audio.src = url.toString();
+    audio.src = mediaProxyUrl(url.toString());
     // At HAVE_NOTHING this becomes the element's official playback start
     // position, applied once the metadata arrives.
     audio.currentTime = startSec;
@@ -748,4 +757,16 @@ function describe(error: unknown): string {
     return `Shaka ${error.code}${status}${uri}`;
   }
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Rewrites a deciphered googlevideo URL onto the relay's `/media?u=…` bounded
+ * range-proxy, derived from `VITE_RELAY_URL` (`config.relayUrl`). A browser
+ * `<audio>` element sends open `Range: bytes=0-`, which googlevideo rejects on
+ * `c=WEB_REMIX` URLs with HTTP 403 while serving bounded 206 chunks.
+ */
+export function mediaProxyUrl(streamUrl: string, relayBase: string = config.relayUrl): string {
+  const base = relayBase.replace(/\/+$/, '').replace(/\/bridge$/, '');
+  if (!base) return streamUrl;
+  return `${base}/media?u=${encodeURIComponent(streamUrl)}`;
 }

@@ -198,16 +198,20 @@ describe('yt.fetch', () => {
     expect(headers['x-origin']).toBeUndefined();
   });
 
-  it('leaves the session bootstrap plain and caches it', async () => {
+  it('leaves the static bootstrap plain and caches it, while sw.js_data stays uncached per session', async () => {
     const { deps, fetches } = makeDeps();
-    const first = await handle(request('yt.fetch', { url: 'https://www.youtube.com/sw.js_data' }), deps);
+    const first = await handle(request('yt.fetch', { url: 'https://www.youtube.com/iframe_api' }), deps);
     const headers = sentHeaders(fetches);
     for (const absent of ['origin', 'referer', 'x-origin']) {
       expect(headers[absent], absent).toBeUndefined();
     }
-    const second = await handle(request('yt.fetch', { url: 'https://www.youtube.com/sw.js_data' }), deps);
+    const second = await handle(request('yt.fetch', { url: 'https://www.youtube.com/iframe_api' }), deps);
     expect(fetches).toHaveLength(1); // the 10-minute family
     expect(second).toEqual(first);
+
+    await handle(request('yt.fetch', { url: 'https://www.youtube.com/sw.js_data' }), deps);
+    await handle(request('yt.fetch', { url: 'https://www.youtube.com/sw.js_data' }), deps);
+    expect(fetches).toHaveLength(3); // never shared across sessions
   });
 
   it('caches youtubei JSON for two minutes only', async () => {

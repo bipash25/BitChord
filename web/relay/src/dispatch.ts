@@ -108,10 +108,13 @@ function forbidden(methodName: string, url: URL): Error {
  * InnerTube clients that take no session signals at all — InnerTubeX sends
  * nothing for VISIONOS, and even the extension stripped headers off
  * `c=VISIONOS` media URLs. Attaching the fallback's cookie and SAPISIDHASH to
- * such a client's call makes YouTube refuse the whole request with a 400
- * (measured: the probe's VISIONOS player call through a fallback-loaded relay,
- * 2026-11-21), so their calls stay anonymous and the client walk falls through
- * to a web client the fallback does sign.
+ * such a client's call makes YouTube refuse the whole request with HTTP 400
+ * "Request contains an invalid argument." across every shape and host
+ * (measured 2026-11-21: signed VISIONOS 1.02 on www = 400, signed VISIONOS_0_1
+ * 0.1 on music.youtube.com = 400 and on www.youtube.com = 400, while unsigned
+ * VISIONOS_0_1 on music = 200 UNPLAYABLE bot-check), so their calls stay
+ * anonymous and the client walk falls through to a web client the fallback
+ * does sign.
  */
 const UNSIGNED_CLIENTS = new Set(['VISIONOS']);
 
@@ -122,9 +125,12 @@ const UNSIGNED_CLIENTS = new Set(['VISIONOS']);
  * for all say who they are).
  */
 function bodyClientName(body: BodyInit | undefined): string | null {
-  if (typeof body !== 'string' || !body.startsWith('{')) return null;
+  if (typeof body !== 'string') return null;
+  const trimmed = body.trimStart();
+  if (!trimmed.startsWith('{')) return null;
   try {
-    const client = (JSON.parse(body) as { context?: { client?: { clientName?: unknown } } }).context?.client?.clientName;
+    const client = (JSON.parse(trimmed) as { context?: { client?: { clientName?: unknown } } }).context?.client
+      ?.clientName;
     return typeof client === 'string' ? client : null;
   } catch {
     return null;

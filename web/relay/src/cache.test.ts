@@ -16,11 +16,18 @@ describe('RelayCache', () => {
   it('misses, then stores, then hits', () => {
     let now = 0;
     const cache = new RelayCache({ clock: () => now });
-    const url = 'https://www.youtube.com/sw.js_data';
+    const url = 'https://www.youtube.com/iframe_api';
     expect(cache.lookup('yt.fetch', url)).toBeNull();
-    const response = responseOf('session', 'application/json');
+    const response = responseOf('bootstrap', 'text/javascript');
     cache.store('yt.fetch', url, response);
     expect(cache.lookup('yt.fetch', url)).toBe(response);
+  });
+
+  it('never caches sw.js_data so each session gets its own visitorData', () => {
+    const cache = new RelayCache();
+    const url = 'https://www.youtube.com/sw.js_data';
+    cache.store('yt.fetch', url, responseOf('visitor', 'application/json'));
+    expect(cache.lookup('yt.fetch', url)).toBeNull();
   });
 
   it('keys by method and URL together', () => {
@@ -30,10 +37,10 @@ describe('RelayCache', () => {
     expect(cache.lookup('addon.fetch', 'https://www.youtube.com/youtubei/v1/x')).toBeNull();
   });
 
-  it('expires the session bootstrap after ten minutes', () => {
+  it('expires the static bootstrap assets after ten minutes', () => {
     let now = 0;
     const cache = new RelayCache({ clock: () => now });
-    const url = 'https://www.youtube.com/sw.js_data';
+    const url = 'https://www.youtube.com/iframe_api';
     cache.store('yt.fetch', url, responseOf('s', 'text/javascript'));
     now = 10 * 60_000;
     expect(cache.lookup('yt.fetch', url)).toBeNull();
@@ -59,8 +66,8 @@ describe('RelayCache', () => {
 
   it('stores only 200s: an error is never replayed', () => {
     const cache = new RelayCache();
-    cache.store('yt.fetch', 'https://www.youtube.com/sw.js_data', { ...responseOf('x', 'text/plain'), status: 503 });
-    expect(cache.lookup('yt.fetch', 'https://www.youtube.com/sw.js_data')).toBeNull();
+    cache.store('yt.fetch', 'https://www.youtube.com/iframe_api', { ...responseOf('x', 'text/plain'), status: 503 });
+    expect(cache.lookup('yt.fetch', 'https://www.youtube.com/iframe_api')).toBeNull();
   });
 
   it('caches youtubei only when the answer is JSON', () => {
@@ -86,7 +93,7 @@ describe('RelayCache', () => {
   it('evicts the least recently used past the capacity', () => {
     let now = 0;
     const cache = new RelayCache({ capacity: 2, clock: () => now });
-    const a = 'https://www.youtube.com/sw.js_data';
+    const a = 'https://www.youtube.com/s/player/0/base.js';
     const b = 'https://www.youtube.com/iframe_api';
     const c = 'https://www.youtube.com/s/player/1/base.js';
     cache.store('yt.fetch', a, responseOf('a', 'text/javascript'));
@@ -101,7 +108,7 @@ describe('RelayCache', () => {
   it('evicts by bytes past the byte budget', () => {
     let now = 0;
     const cache = new RelayCache({ byteBudget: 10, clock: () => now });
-    const a = 'https://www.youtube.com/sw.js_data';
+    const a = 'https://www.youtube.com/s/player/0/base.js';
     const b = 'https://www.youtube.com/iframe_api';
     cache.store('yt.fetch', a, responseOf('12345678', 'text/javascript')); // 8 bytes
     cache.store('yt.fetch', b, responseOf('12345678', 'text/javascript')); // 16 > 10
@@ -112,7 +119,7 @@ describe('RelayCache', () => {
   it('refreshes the TTL when a URL is stored again', () => {
     let now = 0;
     const cache = new RelayCache({ clock: () => now });
-    const url = 'https://www.youtube.com/sw.js_data';
+    const url = 'https://www.youtube.com/iframe_api';
     cache.store('yt.fetch', url, responseOf('first', 'text/javascript'));
     now = 9 * 60_000;
     cache.store('yt.fetch', url, responseOf('second', 'text/javascript'));

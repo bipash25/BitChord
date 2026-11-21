@@ -117,6 +117,26 @@ export function isAddonUrl(url: URL): boolean {
   return url.protocol === 'https:';
 }
 
+/** A valid DNS hostname label sequence, with no empty labels or leading/trailing dots. */
+const GOOGLEVIDEO_HOST = /^(?:[a-z0-9-]+\.)*googlevideo\.com$/i;
+
+/**
+ * `/media`'s fence: only `https://[*.]googlevideo.com/videoplayback` with no
+ * embedded credentials and no non-default port. The endpoint streams unbounded
+ * responses, so anything outside googlevideo's playback path is refused before
+ * a socket opens.
+ */
+export function isMediaUrl(url: URL): boolean {
+  return (
+    url.protocol === 'https:' &&
+    !url.username &&
+    !url.password &&
+    !url.port &&
+    GOOGLEVIDEO_HOST.test(url.hostname) &&
+    url.pathname === '/videoplayback'
+  );
+}
+
 /**
  * Header names the relay never forwards from the page's params:
  * - `cookie`: identity. A page never gets to choose the session a request
@@ -136,11 +156,13 @@ const HEADER_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
 /**
  * The page's headers, sanitised: identity and fetch-managed headers dropped,
- * `x-goog-*` dropped (YouTube identity the relay speaks without, or adds
- * itself when a fallback is configured), and anything a browser fetch would
- * refuse — malformed names, newlines in values, non-string values from an
- * untrusted body — dropped rather than thrown at, so one bad header can't
- * take a whole call down.
+ * `x-goog-*` identity headers dropped (YouTube session/visitor headers the
+ * relay speaks without, or adds itself when a fallback is configured) — except
+ * `x-goog-api-key`, which is the public WAA API key BotGuard's `GenerateIT`
+ * requires (measured 2026-11-21: stripping it makes `GenerateIT` answer HTTP
+ * 403 "Permission denied on the service", keeping it answers 200) — and
+ * anything a browser fetch would refuse dropped rather than thrown at, so one
+ * bad header can't take a whole call down.
  *
  * `authorization` is dropped like the rest of the identity headers unless
  * [options.forwardAuthorization] is set (yt.fetch sets it): a page-held
@@ -160,7 +182,7 @@ export function sanitiseHeaders(
     if (lower === '__proto__') continue;
     if (typeof value !== 'string' || value.includes('\r') || value.includes('\n')) continue;
     if (lower === 'authorization' && (!options.forwardAuthorization || value.startsWith('SAPISIDHASH '))) continue;
-    if (DROPPED_HEADERS.has(lower) || lower.startsWith('x-goog-')) continue;
+    if (DROPPED_HEADERS.has(lower) || (lower.startsWith('x-goog-') && lower !== 'x-goog-api-key')) continue;
     if (!HEADER_NAME.test(name)) continue;
     outgoing[lower] = value;
   }

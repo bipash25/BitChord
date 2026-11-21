@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CHROMIUM_USER_AGENT, isAddonUrl, isInnerTubeUrl, isLyricOrigin, LYRIC_ORIGINS, sanitiseHeaders, ytImpersonationFor } from './hosts.js';
+import { CHROMIUM_USER_AGENT, isAddonUrl, isInnerTubeUrl, isLyricOrigin, isMediaUrl, LYRIC_ORIGINS, sanitiseHeaders, ytImpersonationFor } from './hosts.js';
 
 /** Every allowlist and impersonation decision of web/docs/relay.md's table. */
 
@@ -89,8 +89,20 @@ describe('isAddonUrl', () => {
   });
 });
 
+describe('isMediaUrl', () => {
+  it('allows https googlevideo.com/videoplayback and its CDN subdomains only', () => {
+    expect(isMediaUrl(url('https://rr3---sn-vgqsrn6e.googlevideo.com/videoplayback?itag=251&clen=1000'))).toBe(true);
+    expect(isMediaUrl(url('https://googlevideo.com/videoplayback?itag=140'))).toBe(true);
+    expect(isMediaUrl(url('http://rr3---sn-vgqsrn6e.googlevideo.com/videoplayback?itag=251'))).toBe(false);
+    expect(isMediaUrl(url('https://evil-googlevideo.com/videoplayback?itag=251'))).toBe(false);
+    expect(isMediaUrl(url('https://rr3---sn-vgqsrn6e.googlevideo.com/other'))).toBe(false);
+    expect(isMediaUrl(url('https://rr3---sn-vgqsrn6e.googlevideo.com:8443/videoplayback'))).toBe(false);
+    expect(isMediaUrl(url('https://user:pass@rr3---sn-vgqsrn6e.googlevideo.com/videoplayback'))).toBe(false);
+  });
+});
+
 describe('sanitiseHeaders', () => {
-  it('drops identity and fetch-managed headers', () => {
+  it('drops identity and fetch-managed headers while keeping the public BotGuard API key', () => {
     expect(
       sanitiseHeaders({
         accept: '*/*',
@@ -99,11 +111,12 @@ describe('sanitiseHeaders', () => {
         'x-goog-authuser': '0',
         'x-goog-pageid': 'p',
         'x-goog-visitor-id': 'v',
+        'X-Goog-Api-Key': 'AIzaPublicKey',
         'user-agent': 'bot/1.0',
         host: 'example.com',
         'content-length': '999',
       }),
-    ).toEqual({ accept: '*/*' });
+    ).toEqual({ accept: '*/*', 'x-goog-api-key': 'AIzaPublicKey' });
   });
 
   it('forwards a page-held Authorization only when the caller allows it, and a SAPISIDHASH never', () => {

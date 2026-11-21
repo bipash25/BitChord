@@ -14,9 +14,17 @@ the extension outright — sign-in arrives as brokered OAuth whose tokens stay i
 the user's browser (see the last section). What the relay never does, in any
 phase:
 
-- **proxy audio.** Audio bytes flow browser ← googlevideo directly, on a plain
-  media element (see "Playback in relay mode"). The original compute budget
-  argument (prompt §1: ~150 Mbps per 1000 listeners) still holds.
+- **become an open media proxy.** Originally the relay never touched audio at
+  all (the public-scale ~150 Mbps per 1000 listeners argument). Measured on
+  2026-11-21 for the private deployment (`web/docs/private-deployment.md`),
+  `VISIONOS` refuses signed sessions with HTTP 400 across both `1.02` (`www`)
+  and `0.1` (`music` and `www`) while bot-checking unsigned, leaving
+  fallback-signed `YTMUSIC` (`c=WEB_REMIX`) as the direct-URL client — and
+  googlevideo rejects a browser `<audio>` element's open `Range: bytes=0-` on
+  `c=WEB_REMIX` URLs with HTTP 403 while blocking `Range` CORS preflights with
+  HTTP 400. The relay therefore exposes one strictly fenced bounded range-proxy,
+  `GET {base}/media?u=<googlevideo-url>`, serving `https://[*.]googlevideo.com/videoplayback`
+  only (`web/relay/src/media.ts`).
 - **hold user credentials.** No cookies, no `sp_dc`, no Discord tokens
   server-side — a server holding users' raw sessions is a honeypot. Phase 1
   serves anonymous only; phase 2 adds YouTube sign-in through Google's OAuth
@@ -40,20 +48,27 @@ server-side:
 In extension mode the page makes these calls itself because the rules let it;
 in relay mode the same calls travel through the relay, which performs them with
 the same impersonation. **Audio is the difference**: rule 6/7 rewrite headers on
-`googlevideo.com` so Shaka's XHRs work; the relay never touches googlevideo.
-The page's media element requests it without Origin or Referer — exactly what
-rule 7 spends effort arranging for `c=VISIONOS` URLs — so no rewriting is
-needed there at all.
+`googlevideo.com` so Shaka's XHRs work; in relay mode the `<audio>` element
+cannot fetch `c=WEB_REMIX` URLs directly because its open `Range: bytes=0-`
+receives HTTP 403, so `startProgressive` points `<audio>` at
+`GET {base}/media?u=<googlevideo-url>` (which splits the open range into
+bounded 256 KB upstream `206` fetches with no Origin/Referer and no cookies).
 
 ## The contract
 
 The relay speaks the page ↔ extension bridge contract (`web/shared/src/bridge/`)
 as a third transport, `serverBridge` (`web/shared/src/bridge/server.ts`, already
-written). One endpoint:
+written). Two endpoints:
 
 - `POST {base}/bridge` — body: a `BridgeRequest` envelope, answer: a
   `BridgeResponse` envelope. Same ids, same `protocol` check
   (`BRIDGE_PROTOCOL`), same error codes as `extension/entrypoints/background.ts`.
+- `GET {base}/media?u=<googlevideo-url>` (and `HEAD`) — strictly fenced to
+  `https://[*.]googlevideo.com/videoplayback`; translates the `<audio>`
+  element's open `Range: bytes=0-` (or seek range) into sequential 256 KB
+  bounded upstream `206` fetches and streams them back with `Content-Range` and
+  `Content-Length`, no response cap, per-IP rate limit applied, no server
+  credentials attached.
 
 The relay's `ping` answers:
 
@@ -80,7 +95,8 @@ bodies as `bodyEncoding: 'text'`, anything else base64.
 
 The relay is stateless. It keeps **no** cookies, tokens or user data, and adds
 no credential to any request (`credentials: 'omit'`, and it drops `cookie`,
-`authorization`, `x-goog-*` headers from the page's params).
+`authorization`, and identity `x-goog-*` headers from the page's params while
+keeping the public `x-goog-api-key` BotGuard's `GenerateIT` requires).
 
 ## Abuse limits
 
@@ -95,10 +111,12 @@ A public relay is a free CORS proxy if it isn't fenced:
   it: `429` with `Retry-After`. The page surfaces that as a bridge `network`
   error (`server.ts` already maps it).
 - **Size and time.** Request bodies ≤ 64 KB (InnerTube bodies are small);
-  responses ≤ 8 MB (player scripts are the largest thing fetched); upstream
-  timeout 15 s.
-- **Cache.** GETs only, in-memory LRU (≈512 entries): `sw.js_data` and the
-  player script for 10 min, `youtubei` JSON for 2 min, addon manifests for 5.
+  responses ≤ 8 MB on `/bridge` (player scripts are the largest thing fetched;
+  `/media` streams unbounded chunks); upstream timeout 15 s.
+- **Cache.** GETs only, in-memory LRU (≈512 entries): `/iframe_api` and the
+  player script for 10 min (`sw.js_data` is deliberately uncached so each
+  session receives its own `visitorData`, matching Android's InnerTubeX),
+  `youtubei` JSON for 2 min, addon manifests for 5.
   Keyed by method + URL. Cuts the InnerTube request rate per user by most of
   the browsing chatter and softens the datacenter-IP problem below.
 - No query-string or header secrets in v1; the origin list is the fence. A
@@ -136,8 +154,10 @@ wins. The app work is:
    Safari possible at all. Pick the audio format (Opus itag 251 when
    `audio.canPlayType('audio/webm; codecs="opus"')` says maybe/probably, else
    AAC itag 140; avoid DRC renditions as `selectAudio` does), decipher its URL,
-   add `pot` for the WEBPO clients (unchanged), then
-   `audio.crossOrigin = null; audio.src = url; audio.currentTime = startSec;
+   add `pot` for the WEBPO clients (while `playerRequest` still omits the
+   player-request token in relay mode so `YTMUSIC` returns direct URLs rather
+   than SABR-only), then
+   `audio.crossOrigin = null; audio.src = mediaProxyUrl(url); audio.currentTime = startSec;
    audio.play()`. `StreamStats.mode` gains `'progressive'`. A mid-playback
    refusal (the element's error event with an HTTP cause, or googlevideo's
    403) mirrors `onShakaError`: exclude the client, reload at the same
@@ -194,12 +214,16 @@ Worth saying plainly, because they are the price of no extension:
   routed if they already are.
 - **Age-gated tracks** answer `LOGIN_REQUIRED` with no sign-in path — the
   player already caches that verdict and says so.
-- **The URLs' IP mismatch.** The player request egresses from the relay's IP;
-  the bytes are fetched by the user's. googlevideo has historically not
-  enforced the `ip` parameter on direct URLs (Piped hands server-resolved URLs
-  to browsers at scale), but it's the assumption most likely to break. The
-  probe below measures it; if it ever fails, the fallback is a bounded
-  range-proxy for googlevideo only — deliberately not built now.
+- **Open-range refusal on `c=WEB_REMIX` URLs (why `/media` exists).** Originally
+  the fallback bounded range-proxy was deferred under the assumption that a
+  browser `<audio>` element could stream direct googlevideo URLs on its own.
+  Measured 2026-11-21 on the live trial: the probe's bounded `Range:
+  bytes=0-131071` answered 206, whereas a real `<audio>` element sends open
+  `Range: bytes=0-`, which googlevideo rejects on `c=WEB_REMIX` URLs with HTTP
+  403, and browser `fetch()` cannot split ranges because googlevideo answers the
+  `Range` CORS preflight with HTTP 400. On the private deployment (5–15
+  listeners, ~2 Mbps ceiling), `GET {base}/media?u=<googlevideo-url>` splits
+  open ranges into 256 KB bounded 206s (`web/docs/private-deployment.md`).
 
 ## Deployment
 
@@ -286,9 +310,8 @@ code can be re-deployed on the VPS, a Worker, or both, and re-probed.
 
 ## Out of scope (for now)
 
-An audio range-proxy, a `RELAY_KEY`, progressive video (itag 18) for the
-music-video picture, and — permanently — anything holding user credentials
-server-side.
+A `RELAY_KEY`, progressive video (itag 18) for the music-video picture, and —
+permanently — anything holding user credentials server-side.
 
 ## Phase 2: the extension goes away
 

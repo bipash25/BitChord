@@ -4,6 +4,7 @@ import { dispatchDeps, handle, type DispatchDeps } from './dispatch.js';
 import { isBridgeRequest, type BridgeRequest } from './contract.js';
 import { HARVEST_INTERVAL_MS, startSessionKeeper } from './keeper.js';
 import { BodyTooLargeError, IpLimiter, MAX_BODY_BYTES, readBody } from './limits.js';
+import { serveMedia } from './media.js';
 import { VERSION } from './version.js';
 
 /**
@@ -88,11 +89,28 @@ function fail(response: ServerResponse, status: number, body: string): void {
 }
 
 async function route(request: IncomingMessage, response: ServerResponse): Promise<void> {
-  // `/bridge` on its own, or under a proxy prefix (`/relay/bridge`), is the
-  // one path the page addresses; everything else is a stray probe.
-  const path = request.url ?? '';
-  if (!path.endsWith('/bridge')) {
-    answer(response, 404, 'text/plain', 'the relay serves POST /bridge');
+  // `/bridge` and `/media` on their own, or under a proxy prefix (`/relay/*`),
+  // are the two paths the page addresses; everything else is a stray probe.
+  let pathname: string;
+  try {
+    pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
+  } catch {
+    answer(response, 400, 'text/plain', 'malformed request target');
+    return;
+  }
+
+  if (pathname === '/media' || pathname.endsWith('/media')) {
+    await serveMedia(request, response, {
+      fetchImpl: fetch,
+      limiter,
+      allowedOrigins,
+      clientIp: clientIp(request),
+    });
+    return;
+  }
+
+  if (pathname !== '/bridge' && !pathname.endsWith('/bridge')) {
+    answer(response, 404, 'text/plain', 'the relay serves POST /bridge and GET /media');
     return;
   }
 
