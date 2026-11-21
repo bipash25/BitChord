@@ -4,9 +4,7 @@ import { startPartySync } from '@/party/partySync';
 import { startHistoryReporting } from '@/playback/historyReporting';
 import { startLivePresence } from '@/playback/livePresence';
 import { Outlet } from 'react-router';
-import { config } from '@/config';
 import { useExtension } from '@/extension/useExtension';
-import { isMobileBrowser } from '@/lib/platform';
 import { useUi } from '@/state/ui';
 import { useKeyboardShortcuts } from './useKeyboardShortcuts';
 import { Banner, bannerButtonClass } from './Banner';
@@ -15,8 +13,6 @@ import { MobileTopBar } from './MobileTopBar';
 import { PlayerBar } from './PlayerBar';
 import { SidePanel } from './SidePanel';
 import { Sidebar } from './Sidebar';
-
-const mobile = isMobileBrowser();
 
 // It carries am-lyrics; loaded the first time it opens, as the side panel's lyrics are.
 const FullScreenPlayer = lazy(() => import('./FullScreenPlayer').then((m) => ({ default: m.FullScreenPlayer })));
@@ -42,38 +38,23 @@ export function AppShell() {
   const fullScreen = useUi((s) => s.fullScreen);
 
   let banner = null;
-  // The banners are for visitors who can't play at all: with the server relay
-  // answering, a phone plays (mini player + relay playback) and needs nothing,
-  // and a desktop that can't reach it is told so — there is nothing to install
-  // (relay.md phase 2). 'missing' means the relay wasn't configured or didn't
-  // answer; 'checking' stays quiet until it settles.
-  if (extension.state === 'missing') {
-    if (mobile) {
-      banner = (
-        <Banner
-          title="BitChord is better in the app."
-          detail="Playback here needs BitChord’s server relay, which didn’t answer. The Android app has everything."
-          action={
-            <a className={bannerButtonClass} href={config.androidAppUrl} target="_blank" rel="noreferrer">
-              Get the App
-            </a>
-          }
-        />
-      );
-    } else if (!bannerDismissed) {
-      banner = (
-        <Banner
-          title="The server relay is unreachable."
-          detail="Playback, search, lyrics and addons travel through BitChord’s server relay, and it didn’t answer. Check your connection and reload."
-          action={
-            <button className={bannerButtonClass} onClick={() => location.reload()}>
-              Reload
-            </button>
-          }
-          onDismiss={dismissBanner}
-        />
-      );
-    }
+  // The banner is for visitors who can't play at all: the relay wasn't
+  // configured or didn't answer, and reloading is the one thing worth trying.
+  // There is nothing to install — the site no longer points at the Android
+  // app anywhere — and 'checking' stays quiet until it settles.
+  if (extension.state === 'missing' && !bannerDismissed) {
+    banner = (
+      <Banner
+        title="The server relay is unreachable."
+        detail="Playback, search, lyrics and addons travel through BitChord’s server relay, and it didn’t answer. Check your connection and reload."
+        action={
+          <button className={bannerButtonClass} onClick={() => location.reload()}>
+            Reload
+          </button>
+        }
+        onDismiss={dismissBanner}
+      />
+    );
   }
 
   return (

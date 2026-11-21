@@ -43,6 +43,12 @@ const YT_RULES: readonly YtRule[] = [
   { pattern: /^https:\/\/www\.youtube\.com\/s\/player\//, origin: null },
   // BotGuard GenerateIT must come from YouTube's origin, Origin and Referer only.
   { pattern: /^https:\/\/www\.youtube\.com\/api\/jnn\//, origin: 'https://www.youtube.com' },
+  // Playback-tracking pings (`videostatsPlaybackUrl` & family from a signed
+  // /player answer): the page's history reporting sends them as GETs with
+  // `auth: true`, and the relay signs them like any other YouTube call
+  // (web/app historyReporting.ts). Dressed as the music client — the WEB_REMIX
+  // page a stats ping's own `c=` parameter names.
+  { pattern: /^https:\/\/s\.youtube\.com\/api\/stats\//, origin: 'https://music.youtube.com' },
 ];
 
 /**
@@ -75,6 +81,19 @@ export function isInnerTubeUrl(url: URL): boolean {
 }
 
 /**
+ * Whether [url] is one of YouTube's playback-tracking pings
+ * (`s.youtube.com/api/stats/*`): the watch-history reporting the page sends
+ * as the signed account. Two things distinguish them from every other row
+ * the table serves: they are side effects rather than reads — a served
+ * answer must never come from the cache, or the play it registers is
+ * swallowed — and the page only ever sends them as GETs, so anything else
+ * aimed at the family is not the page speaking.
+ */
+export function isStatsUrl(url: URL): boolean {
+  return url.hostname === 's.youtube.com' && url.pathname.startsWith('/api/stats/');
+}
+
+/**
  * Lyric providers the page can't reach itself. The list is the relay's own
  * now that the extension (whose `lyricHosts.ts` it was copied from) is gone;
  * the app learns which of the hosts it routes through the bridge are served
@@ -82,7 +101,8 @@ export function isInnerTubeUrl(url: URL): boolean {
  * surgery (the Musixmatch capability cookie, Apple's Origin) — the design
  * rule is that no credential, and no cookie of any kind, is ever added to a
  * lyric or addon request. The one cookie the relay ever attaches is the
- * fallback's, on InnerTube hosts only (`fallback.ts`).
+ * fallback's, on the YouTube rows it signs — InnerTube and the stats pings
+ * (`fallback.ts`).
  */
 export const LYRIC_ORIGINS = [
   'https://lrc.red',

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { RelayCache } from './cache.js';
-import { BRIDGE_CHANNEL, BRIDGE_PROTOCOL, isBridgeRequest, type BridgeRequest, type HttpResponse } from './contract.js';
-import { dispatchDeps, handle, RELAY_CAPABILITIES } from './dispatch.js';
+import { BRIDGE_CHANNEL, BRIDGE_PROTOCOL, isBridgeRequest, type BridgeRequest, type Capability, type HttpResponse } from './contract.js';
+import { dispatchDeps, handle, FALLBACK_CAPABILITIES, RELAY_CAPABILITIES } from './dispatch.js';
 import { FallbackCredential, parseCookieJar } from './fallback.js';
 import { CHROMIUM_USER_AGENT } from './hosts.js';
 import { VERSION } from './version.js';
@@ -71,6 +71,9 @@ const ACCOUNT_MENU_BODY = JSON.stringify({
   ],
 });
 
+/** A one-cookie jar with an obviously-secret value, distinct per use so leak hunts can't cross-contaminate. */
+const burner = () => new FallbackCredential(parseCookieJar('.google.com\tTRUE\t/\tFALSE\t1893456000\tSAPISID\tburner-secret'));
+
 describe('envelope', () => {
   it('refuses a protocol the relay does not speak', async () => {
     const { deps } = makeDeps();
@@ -102,10 +105,18 @@ describe('ping', () => {
     });
   });
 
-  it('claims nothing identity-shaped', () => {
+  it('claims the session families only when a fallback makes them real', () => {
+    // The anonymous relay claims neither: it signs nothing.
     expect(RELAY_CAPABILITIES).not.toContain('yt.auth');
     expect(RELAY_CAPABILITIES).not.toContain('yt.stats');
-    expect(RELAY_CAPABILITIES).not.toContain('discord');
+    // The fallback-loaded relay claims exactly both — it signs auth calls and
+    // the stats pings — and nothing outside the contract's vocabulary.
+    expect(FALLBACK_CAPABILITIES).toContain('yt.auth');
+    expect(FALLBACK_CAPABILITIES).toContain('yt.stats');
+    const vocabulary: Capability[] = ['yt', 'yt.auth', 'yt.stats', 'addon', 'lyrics'];
+    for (const capability of [...RELAY_CAPABILITIES, ...FALLBACK_CAPABILITIES]) {
+      expect(vocabulary, capability).toContain(capability);
+    }
   });
 
   it('reads the version out of package.json', () => {
@@ -324,6 +335,13 @@ describe('the static states', () => {
       },
     });
   });
+
+  it('answers ping with the session capabilities only when a fallback is loaded', async () => {
+    const bare = await handle(request('ping', {}), makeDeps().deps);
+    expect(bare).toMatchObject({ ok: true, result: { capabilities: RELAY_CAPABILITIES } });
+    const signed = await handle(request('ping', {}), makeDeps(undefined, burner()).deps);
+    expect(signed).toMatchObject({ ok: true, result: { capabilities: FALLBACK_CAPABILITIES } });
+  });
 });
 
 describe('permissions and the unsupported rest', () => {
@@ -393,16 +411,6 @@ describe('failure mapping', () => {
 });
 
 describe('the fallback credential (private-deployment.md)', () => {
-  /** A one-cookie jar with an obviously-secret value, distinct per use so leak hunts can't cross-contaminate. */
-  const burner = () => new FallbackCredential(parseCookieJar('.google.com\tTRUE\t/\tFALSE\t1893456000\tSAPISID\tburner-secret'));
-
-  it('ping never answers yt.auth, fallback or not — the credential is invisible', async () => {
-    const bare = await handle(request('ping', {}), makeDeps().deps);
-    expect(bare).toMatchObject({ ok: true, result: { capabilities: ['yt', 'addon', 'lyrics'] } });
-    const signed = await handle(request('ping', {}), makeDeps(undefined, burner()).deps);
-    expect(signed).toMatchObject({ ok: true, result: { capabilities: ['yt', 'addon', 'lyrics'] } });
-  });
-
   it('signs anonymous InnerTube calls with the jar, a SAPISIDHASH for the dressed origin, and X-Goog-AuthUser', async () => {
     const { deps, fetches } = makeDeps(undefined, burner());
     await handle(
@@ -570,7 +578,10 @@ describe('the fallback credential (private-deployment.md)', () => {
     }
   });
 
-  it('answers authState as signed out even with a fallback loaded — the credential is invisible, and no call is made to read one', async () => {
+  it('answers authState as a functional, identity-free signed-in session when a fallback is loaded — and never reads the account to build it', async () => {
+    // The account_menu responder is wired to prove the negative: even with a
+    // readable identity one call away, nothing asks. The identity-read code
+    // is gone (the corrected ruling), so no name can leak into an answer.
     const { deps, fetches } = makeDeps(
       (url) =>
         url.includes('account_menu')
@@ -579,17 +590,55 @@ describe('the fallback credential (private-deployment.md)', () => {
       burner(),
     );
     const answer = await handle(request('yt.authState', {}), deps);
+    // Functional: signedIn is what the page's flows gate on, so the library,
+    // history, likes and the signed playback retry all engage.
     expect(answer).toMatchObject({
       ok: true,
-      result: { browserSignedIn: false, connected: false, signedIn: false, accounts: [], active: null, problem: null },
+      result: {
+        browserSignedIn: false,
+        connected: true,
+        signedIn: true,
+        accounts: [],
+        active: { id: expect.any(String), name: '', handle: null, avatarUrl: null, brand: false, authUser: '0' },
+        problem: null,
+      },
     });
-    // Nothing about the account is ever asked: identity, name or otherwise.
+    // Identity-free: nothing from the account_menu body — the name, email,
+    // handle or avatar the responder holds — is anywhere in the answer.
+    const json = JSON.stringify(answer);
+    for (const identity of ['Burner One', 'burner@example.com', '@burner', 'burner.png']) {
+      expect(json.includes(identity), identity).toBe(false);
+    }
+    // Nothing about the account is ever asked, refresh or not.
     expect(fetches).toHaveLength(0);
-    // The page is never told a session exists, so it renders its ordinary
-    // signed-out states while the relay signs the calls silently.
     const again = await handle(request('yt.authState', { refresh: true }), deps);
-    expect(again).toMatchObject({ ok: true, result: { signedIn: false } });
+    expect(again).toMatchObject({ ok: true, result: { signedIn: true } });
     expect(fetches).toHaveLength(0);
+  });
+
+  it('serves the playback-tracking stats pings GET-only, signed by the jar, and never caches them', async () => {
+    const { deps, fetches } = makeDeps(undefined, burner());
+    const url = 'https://s.youtube.com/api/stats/playback?cl=TEST&cpn=nonce';
+    const served = await handle(request('yt.fetch', { url, method: 'GET', auth: true }), deps);
+    expect(served).toMatchObject({ ok: true, result: { status: 200 } });
+    const headers = sentHeaders(fetches);
+    // Dressed and signed as the music page the ping's own c= names.
+    expect(headers['origin']).toBe('https://music.youtube.com');
+    expect(headers['referer']).toBe('https://music.youtube.com/');
+    expect(headers['cookie']).toBe('SAPISID=burner-secret');
+    expect(headers['authorization']).toMatch(/^SAPISIDHASH \d+_[0-9a-f]{40}$/);
+    // A ping is a side effect: the same URL twice must reach YouTube twice,
+    // or the second play's registration would be swallowed by the cache.
+    await handle(request('yt.fetch', { url, method: 'GET', auth: true }), deps);
+    expect(fetches).toHaveLength(2);
+    // Only GETs are the page speaking: the family is not a POST surface.
+    const posted = await handle(request('yt.fetch', { url, method: 'POST', body: '{}' }), deps);
+    expect(posted).toMatchObject({ ok: false, error: { code: 'forbidden' } });
+    // And without a fallback the auth call is refused, as every auth call is.
+    const bare = makeDeps();
+    const refused = await handle(request('yt.fetch', { url, method: 'GET', auth: true }), bare.deps);
+    expect(refused).toMatchObject({ ok: false, error: { code: 'unauthenticated' } });
+    expect(bare.fetches).toHaveLength(0);
   });
 
   it('leaks no part of the jar, or its signature, into any answer or error the dispatcher can produce', async () => {
@@ -605,6 +654,7 @@ describe('the fallback credential (private-deployment.md)', () => {
       request('yt.fetch', { url: 'https://www.youtube.com/sw.js_data' }),
       request('yt.fetch', { url: 'https://evil.example.com/youtubei/v1/player' }),
       request('yt.fetch', { url: 'https://www.youtube.com/youtubei/v1/player', auth: true }),
+      request('yt.fetch', { url: 'https://s.youtube.com/api/stats/playback?cpn=nonce', auth: true }),
       request('yt.authState', {}),
       request('addon.fetch', { url: 'https://example.com/manifest.json' }),
       request('yt.selectChannel', { channelId: 'x' }),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CHROMIUM_USER_AGENT, isAddonUrl, isInnerTubeUrl, isLyricOrigin, isMediaUrl, LYRIC_ORIGINS, sanitiseHeaders, ytImpersonationFor } from './hosts.js';
+import { CHROMIUM_USER_AGENT, isAddonUrl, isInnerTubeUrl, isLyricOrigin, isMediaUrl, isStatsUrl, LYRIC_ORIGINS, sanitiseHeaders, ytImpersonationFor } from './hosts.js';
 
 /** Every allowlist and impersonation decision of web/docs/relay.md's table. */
 
@@ -39,6 +39,26 @@ describe('ytImpersonationFor', () => {
     });
   });
 
+  it('dresses the playback-tracking stats pings as the music client', () => {
+    expect(ytImpersonationFor(url('https://s.youtube.com/api/stats/playback?cl=TEST&cpn=nonce'))).toEqual({
+      origin: 'https://music.youtube.com',
+      referer: 'https://music.youtube.com/',
+    });
+    expect(ytImpersonationFor(url('https://s.youtube.com/api/stats/watchtime?st=0&et=30'))).toEqual({
+      origin: 'https://music.youtube.com',
+      referer: 'https://music.youtube.com/',
+    });
+  });
+
+  it('names exactly the playback-tracking family the stats fence covers', () => {
+    expect(isStatsUrl(url('https://s.youtube.com/api/stats/playback?cpn=nonce'))).toBe(true);
+    expect(isStatsUrl(url('https://s.youtube.com/api/stats/atr?cpn=nonce'))).toBe(true);
+    // Only the stats path on that host, and only that host.
+    expect(isStatsUrl(url('https://s.youtube.com/api/other'))).toBe(false);
+    expect(isStatsUrl(url('https://www.youtube.com/api/stats/playback'))).toBe(false);
+    expect(isStatsUrl(url('https://evil-s.youtube.com/api/stats/playback'))).toBe(false);
+  });
+
   it('names exactly the InnerTube family a fallback credential signs', () => {
     expect(isInnerTubeUrl(url('https://music.youtube.com/youtubei/v1/player'))).toBe(true);
     expect(isInnerTubeUrl(url('https://www.youtube.com/youtubei/v1/account/account_menu'))).toBe(true);
@@ -57,7 +77,6 @@ describe('ytImpersonationFor', () => {
       'http://www.youtube.com/youtubei/v1/player', // https only
       'https://www.youtube.com/watch', // a page, not an API
       'https://music.youtube.com/sw.js_data', // music serves InnerTube only
-      'https://s.youtube.com/api/stats/watchtime', // play reporting is the extension's signed work
       'https://accounts.google.com/',
     ]) {
       expect(ytImpersonationFor(url(value)), value).toBeNull();

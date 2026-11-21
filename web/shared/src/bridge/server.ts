@@ -18,13 +18,17 @@ import type { Bridge } from './client';
  * served over HTTP by the `web/relay` service. Phase 2's only transport —
  * the extension it once trailed in detection is gone.
  *
- * The relay answers the anonymous subset — `ping`, `yt.fetch`, `lyrics.fetch`,
- * `addon.fetch` — and reports every identity-holding method as signed out or
- * unsupported until phase 2's brokered sign-in lands.
+ * The relay serves `ping`, `yt.fetch`, `lyrics.fetch` and `addon.fetch`, and
+ * answers `yt.authState` from its own session state: a functional,
+ * identity-free signed-in answer when its operator has loaded a fallback
+ * credential (web/docs/private-deployment.md — the features are live, the
+ * account is anonymous), the signed-out shape otherwise. Channel switching
+ * and connect stay unsupported: there is exactly one session and the page
+ * never chooses it.
  *
  * One endpoint: `POST {base}/bridge` with a `BridgeRequest` envelope, answered
  * with a `BridgeResponse` envelope. No credentials cross this boundary: the
- * relay holds none.
+ * relay holds none it will share.
  */
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -50,8 +54,8 @@ export function serverBridge(baseUrl: string): Bridge {
     },
     subscribe(_listener: (event: BridgeEvent) => void) {
       // The relay holds no identity and watches no cookies, so there is
-      // nothing to push. State is re-read through calls, which always answer
-      // signed out here.
+      // nothing to push. State is re-read through calls — the auth answer
+      // only changes with a relay restart, which a reload notices anyway.
       return () => {};
     },
   };

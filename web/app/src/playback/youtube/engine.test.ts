@@ -17,7 +17,6 @@ let relayUrlValue = 'http://69.197.187.54:8080/relay';
 vi.mock('@/config', () => ({
   get config() {
     return {
-      androidAppUrl: '',
       partyServerUrl: '',
       relayUrl: relayUrlValue,
       spotifyClientId: '',

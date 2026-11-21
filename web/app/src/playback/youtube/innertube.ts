@@ -167,11 +167,21 @@ async function sessionFetch(input: RequestInfo | URL, init?: RequestInit): Promi
   return simpleRequestFetch(input, init);
 }
 
-/** InnerTube calls through the relay, signed as the chosen channel; the rest as simpleRequestFetch. */
+/**
+ * InnerTube calls through the relay, signed as the chosen channel; the rest
+ * as the anonymous session's own fetch. That delegate matters in relay mode:
+ * the bootstrap and player-script URLs (`sw.js_data`, `iframe_api`,
+ * `/s/player/*`) are not page-readable directly — a browser fetch of them
+ * CORS-fails (relay.md's measurements), which is the whole reason the
+ * anonymous session routes them through the relay. Signed-in requests used
+ * to take the direct path here because the extension's rules made it work;
+ * with the relay as the transport the session bootstrap must travel the same
+ * way whether the instance is signed or not.
+ */
 async function signedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const request = input instanceof Request ? input : null;
   const url = new URL(request ? request.url : input.toString());
-  if (!isInnertubeCall(url)) return simpleRequestFetch(input, init);
+  if (!isInnertubeCall(url)) return sessionFetch(input, init);
 
   const bridge = getBridge();
   if (!bridge) throw new Error('Signed-in requests need the server relay, which didn’t answer');

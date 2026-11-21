@@ -31,7 +31,10 @@ phase:
   device flow, whose tokens live client-side (below). One deliberate
   exception, decided in `web/docs/private-deployment.md`: a *throwaway*
   account's cookie as the anonymous-fallback signer on a private deployment
-  — never the public site, never a personal account.
+  — never the public site, never a personal account. Its features are live
+  (signed calls, library, history, likes) while the account itself stays
+  anonymous — no name, avatar or email is ever read or returned
+  (private-deployment.md's invisibility correction, 2026-11-22).
 - **become a general proxy.** Every method is limited to an allowlist of hosts.
 
 What it *does* do — the header surgery the extension's `declarativeNetRequest`
@@ -73,21 +76,25 @@ written). Two endpoints:
 The relay's `ping` answers:
 
 ```jsonc
+// no fallback credential loaded (the anonymous relay):
 { "version": "<web/relay/package.json version>", "protocol": 1, "browser": "server", "capabilities": ["yt", "addon", "lyrics"] }
+// with the private deployment's fallback loaded (private-deployment.md):
+{ "version": "<web/relay/package.json version>", "protocol": 1, "browser": "server", "capabilities": ["yt", "yt.auth", "yt.stats", "addon", "lyrics"] }
 ```
 
 Methods served:
 
 | Method | Behaviour |
 |---|---|
-| `ping` | as above |
+| `ping` | as above — the session capabilities are reported only when a fallback credential makes them real |
 | `yt.fetch` (no `auth`) | allowlisted YouTube hosts, impersonated as the table above |
 | `yt.fetch` (`auth: true`) | `unauthenticated` without a fallback credential: "The relay can't sign YouTube requests; its operator can set RELAY_FALLBACK_COOKIES_FILE to a shared account." With one loaded, served signed like an anonymous call (`web/docs/private-deployment.md`) |
+| `yt.fetch` (stats pings) | `s.youtube.com/api/stats/*`, GET only — the page's watch-history reporting. Signed by the fallback like any auth call, and never cached: a ping is a side effect, and a served-from-cache answer would swallow the play it registers |
 | `addon.fetch` | any `https://` URL (user-added addon servers), no cookies, capped |
 | `lyrics.fetch` | only the hosts in the relay's `LYRIC_ORIGINS` (`web/relay/src/hosts.ts`) |
 | `lyrics.permissions` | `{ granted: origins.filter(host is allowlisted) }` — the relay needs no grants |
 | `lyrics.requestPermissions` | no-op `{}` |
-| `yt.authState` | the static signed-out `YtAuthState` |
+| `yt.authState` | without a fallback: the static signed-out `YtAuthState`. With one: a functional, identity-free signed-in state — `signedIn: true` (the features are live), a chosen-channel `active` row with empty identity fields (nothing is read that could fill them), `accounts: []` — so the page's flows engage while no name, avatar or email can render anywhere (`web/docs/private-deployment.md`, the invisibility correction) |
 | anything else | `{ ok: false, error: { code: 'unsupported', … } }` |
 
 Responses are serialised the way the extension's `ytFetch` did: text
@@ -179,13 +186,12 @@ wins. The app work is:
    present.
 6. **`videoStream()`** (music video picture): needs Shaka + DASH. In relay mode
    return `null` — the song artwork shows, as it already does for art tracks.
-7. **`src/shell/AppShell.tsx` + `ExtensionPage.tsx`**: the mobile banner
-   ("better in the app") is shown when *nothing can play* — no extension and no
-   relay detected. With the relay present on mobile, show nothing (or a
-   dismissible note); desktop without extension keeps the install banner only
-   when no relay is configured. The Extension page names the relay when it's
-   the transport ("Server relay · anonymous playback") and still recommends
-   the extension for sign-in, Spotify and Discord.
+7. **`src/shell/AppShell.tsx`**: no mobile banner at all — the phone plays
+   through the relay (mini player + relay playback) and needs nothing
+   installed, so the site never points at the Android app anywhere (the
+   app-store banner and sidebar link were removed outright, 2026-11-22: the
+   site doesn't beg). The one banner left is the dismissible
+   relay-unreachable band with a Reload action, shown when nothing can play.
 8. **A mobile mini-player.** `PlayerBar` is `max-sm:hidden`, so today a phone
    has no controls at all. Add a compact docked bar for small screens
    (artwork, title, play/pause, next; tap → `FullScreenPlayer`, which exists
@@ -193,10 +199,13 @@ wins. The app work is:
    `env(safe-area-inset-bottom)` padding. Minimal — this unblocks use, it is
    not the mobile redesign.
 
-Capabilities already make the rest of the UI degrade correctly: the relay
-reports no `yt.auth`/`yt.stats`, and the settings rows and `useYtAuth` render
-their signed-out states for missing capabilities. Spotify no longer reads a
-capability at all — the page's own PKCE sign-in is configured by
+Capabilities still make the rest of the UI degrade correctly: on an
+anonymous relay (no fallback credential) the settings rows and `useYtAuth`
+render their signed-out states for the missing `yt.auth`/`yt.stats`. With a
+fallback loaded both are reported, and `yt.authState`'s identity-free
+signed-in answer is what the account surfaces render from — the sign-in
+prompt where a name would have been. Spotify no longer reads a capability
+at all — the page's own PKCE sign-in is configured by
 `VITE_SPOTIFY_CLIENT_ID`, and unconfigured means its quiet state.
 
 ## Playback in relay mode — constraints
@@ -369,11 +378,13 @@ InnerTube call once signed in):
   on its first live probe (see `web/docs/private-deployment.md`). That jar
   is the relay's to keep alive from then on — InnerTube responses carry no
   `Set-Cookie` at all (measured), so the rotations are harvested by a
-  session keeper's `HEAD` of the www homepage — and the fallback is
-  **invisible** (the owner's decision, 2026-11-21): `ping` never reports
-  `yt.auth` and `yt.authState` answers the static signed-out state, so no
-  name, avatar or email of the shared account ever reaches the page. Both
-  the measurements and the keeper's limits are recorded in
+  session keeper's `HEAD` of the www homepage. The fallback's *identity* is
+  **invisible** (the owner's corrected decision, 2026-11-22): its features
+  are fully live — `ping` reports `yt.auth`/`yt.stats` when it is loaded,
+  and `yt.authState` answers a signed-in state with no identity fields
+  filled, so no name, avatar or email of the shared account ever reaches
+  the page while the library, history and likes all work. Both the
+  measurements and the keeper's limits are recorded in
   `web/docs/private-deployment.md`.
 - Age-restricted playback: the signed web clients' streams still carry the
   ~60–70 s stream-protection problem (`web/docs/youtube-playback.md`),

@@ -158,7 +158,10 @@ async function identity(): Promise<Omit<JoinRequest, 'maxMembers' | 'autoplayEna
   const auth = ytAuthSnapshot();
   const active = auth.signedIn ? auth.active : null;
   if (!active) throw new PartyError('not_signed_in', 'Sign in to YouTube Music to listen together.');
-  const name = partySettings().nickname.trim() || active.name;
+  // The relay's session is anonymous (its account's name never reaches the
+  // page), so a member who set no nickname needs a neutral label rather than
+  // an empty one in the party list.
+  const name = partySettings().nickname.trim() || active.name || 'Guest';
   return {
     userId: (await sha256(`${active.authUser}:${active.id}`)).slice(0, 32),
     deviceId: deviceId(),

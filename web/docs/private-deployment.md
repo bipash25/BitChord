@@ -46,7 +46,7 @@ traffic, and a household is under the noise floor:
 |---|---|
 | One account absorbing everyone's `player` calls looks like a bot farm | Total traffic is tiny and human-shaped; anomaly detection has nothing to bite on |
 | Server-held credential is a honeypot | It's a burner with nothing attached — already assumed burned the day it's created |
-| Plays pollute the account's history/recommendations | Nothing to pollute; pause watch history and even that's gone |
+| Plays pollute the account's history/recommendations | Nothing to pollute — and since the 2026-11-22 correction the history is the point: plays reporting to it is what keeps Recently Played and the recommendations following what's played here |
 | ToS exposure for proxying on behalf of strangers | A private instance for known friends, same terms as any self-hosted proxy |
 
 **The one form that stays wrong at any scale: the host's *main* account on
@@ -75,20 +75,69 @@ their history, no server custody.
   `unauthenticated` when the server holds the fallback credential — it
   signs the call with it instead. Signed-in users never touch the
   fallback; only the not-logged-in case lands on the burner.
-- **Invisibility (the owner's decision, 2026-11-21):** the fallback signs
-  silently and is never reported to the page. `ping` never answers
-  `yt.auth`; `yt.authState` always answers the static signed-out state, so
-  the app renders its ordinary signed-out prompts while playback just
-  works — no name, avatar or email of the shared account can surface
-  anywhere, on any screen, and no friend ever learns which account is
-  under them. The operator's health check for the credential is the probe
-  (and the rotation log lines below), not an identity answer.
+- **Invisibility, corrected (the owner's ruling, 2026-11-22):** the
+  fallback's *identity* is invisible; its *features* are not. `ping`
+  answers `yt.auth` and `yt.stats` when a fallback is loaded, and
+  `yt.authState` answers a functional signed-in state — `signedIn: true`
+  with a chosen-channel row whose identity fields are empty — so the
+  library, listen history, likes, add-to-playlist and the personalized
+  home all work through the relay's signed calls, and the UI renders its
+  "Sign in with YouTube" prompt wherever the account's own name, avatar,
+  email or handle would have appeared. The identity-read code is gone
+  outright: no name is ever read, so none can surface, on any screen. The
+  operator's health check for the credential remains the probe (and the
+  rotation log lines below), not an identity answer. (The 2026-11-21
+  ruling this corrects — "the page is never told a session exists" —
+  over-stripped: it gated off every feature the fallback was for. See
+  "The invisibility correction" below.)
 - **Hygiene on the throwaway:** created fresh, nothing attached, no
-  recovery email worth protecting; watch history paused; a second burner
-  pre-created and waiting, so a bot-check on the first is a 5-minute env
-  swap, not an outage.
+  recovery email worth protecting; watch history *on* — the corrected
+  design reports plays to it deliberately (Recently Played and the
+  recommendations follow them); a second burner pre-created and waiting,
+  so a bot-check on the first is a 5-minute env swap, not an outage.
 - The existing relay fences (per-IP rate limit, response cache) keep the
   fallback account's request rate gentle as a side effect.
+
+## The invisibility correction — 2026-11-22
+
+The first invisibility ruling (2026-11-21) was read as "the page is never
+told a session exists": `ping` stopped answering `yt.auth` and
+`yt.authState` answered the static signed-out state, fallback or not. That
+over-stripped. Signed-out answers gate off everything the fallback existed
+to provide — the signed InnerTube session (library, history, likes,
+add-to-playlist), the personalized home, the age-gate signed retry in the
+engine, and the watch-history reporting — leaving the burner to sign
+playback into an account whose features nobody could reach.
+
+**The corrected ruling: invisible means only that the throwaway's name,
+avatar, email and handle never appear anywhere in the frontend. The
+features the relay account provides are fully live.**
+
+- `ping` answers `yt.auth` and `yt.stats` when a fallback credential is
+  loaded (the capabilities are real — the relay signs), and the anonymous
+  subset without one.
+- `yt.authState` answers a functional but identity-free session:
+  `browserSignedIn: false, connected: true, signedIn: true`, `accounts: []`,
+  and an `active` channel with empty identity fields. `signedIn` is what
+  the app's flows gate on; the `active` row exists so the app's
+  identity-keyed cache resets engage as they do for a real sign-in; the
+  empty fields are why no screen can render a name. Nothing is read to
+  build the answer — the account-menu identity-read code was removed with
+  the first ruling and stays removed.
+- The UI shows its sign-in prompt ("Sign in with YouTube" — the pattern
+  LibraryPage already carried) wherever the account's own name/avatar
+  would have rendered: the sidebar's account control and Settings'
+  account row. The prompt is presentation only — there is no web sign-in
+  to complete (the TV bearer opens nothing), so tapping it explains that
+  in one honest line.
+- Watch-history reporting works: the page's stats pings
+  (`s.youtube.com/api/stats/*`, GET, `auth: true`) are served signed by
+  the fallback, like every other auth call, and are never cached — a ping
+  is a side effect; serving one from the cache would swallow the play it
+  registers.
+- Hygiene is unchanged: no credential material in any log line, error,
+  cache key or answer, ever; the identity-read code stays gone, so no
+  query the relay can make ever asks YouTube who the burner is.
 
 ## Open before this is real
 

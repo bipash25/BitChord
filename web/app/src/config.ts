@@ -1,6 +1,5 @@
 /** Build-time configuration, from Vite's `VITE_*` environment variables. */
 export const config = {
-  androidAppUrl: import.meta.env.VITE_ANDROID_APP_URL || 'https://github.com/kushagrasinghx/BitChord/releases/latest',
   /** BitChord's Listen Together server. vite.config.ts refuses a production build without it. */
   partyServerUrl: import.meta.env.VITE_PARTY_SERVER_URL ?? '',
   /**

@@ -62,7 +62,6 @@ the probe that verifies a deployment are in [`relay/README.md`](relay/README.md)
 |---|---|---|---|
 | `VITE_RELAY_URL` | app (`app/.env.local`, Pages env) | None. Empty = off, nothing can play | The relay's base URL, e.g. `https://bitchord.in/relay`. Production sets it in the Cloudflare Pages environment |
 | `VITE_PARTY_SERVER_URL` | app (`app/.env.local`, Pages env) | None. The Listen Together server; `vite build` fails without it | |
-| `VITE_ANDROID_APP_URL` | app | The GitHub releases page | Where the mobile banner points |
 | `VITE_SPOTIFY_CLIENT_ID` | app (`app/.env.local`, Pages env) | None. Empty = Spotify isn't configured; its surfaces show a quiet "not configured" state | The Spotify app's client id for the page's PKCE sign-in (see "Spotify" below) |
 
 ## Spotify

@@ -1,66 +1,45 @@
-import { useRefreshYtAuth, useYtAuth } from '@/extension/useYtAuth';
+import { useState } from 'react';
+import { useYtAuth } from '@/extension/useYtAuth';
 
-// The relay-account marker: the shared fallback identity, not a personal session.
-const relayTag = 'flex-none rounded-[4px] bg-quinary px-1 type-[600_10px/14px] text-secondary';
-const avatar = 'inline-grid flex-none place-items-center rounded-full bg-quinary object-cover type-[600_11px/1] text-secondary';
+// The signed-out pill: Apple's red "Sign In" (report §1, .navigation__native-cta).
 const pill =
-  'self-start rounded-[16px] bg-key px-3.5 py-[5px] type-[600_13px/18px] text-white hover:brightness-[1.08] disabled:opacity-60';
-
-function Avatar({ src, name, size }: { src: string | null; name: string; size: number }) {
-  return src ? (
-    <img className={avatar} src={src} alt="" width={size} height={size} referrerPolicy="no-referrer" />
-  ) : (
-    <span className={avatar} style={{ width: size, height: size }} aria-hidden="true">
-      {name.slice(0, 1).toUpperCase()}
-    </span>
-  );
-}
+  'self-start rounded-[16px] bg-key px-3.5 py-[5px] type-[600_13px/18px] text-white hover:brightness-[1.08]';
 
 /**
  * The sidebar's account control. The relay is the only transport, and its one
- * identity is the fallback account (web/docs/private-deployment.md): a
- * throwaway the relay's operator holds, whose cookie jar signs playback for
- * listeners without a session of their own. The browser itself holds nothing
- * — browserSignedIn is false while signedIn is true — so the control names
- * whose account is playing instead of whose browser is connected.
+ * session is the fallback account (web/docs/private-deployment.md): a
+ * throwaway the relay's operator holds, whose cookie jar signs playback — and
+ * the library, history and likes with it — for listeners without a session of
+ * their own. The browser itself holds nothing (`browserSignedIn` false), and
+ * the relay never reads the account's identity (the corrected invisibility
+ * ruling, 2026-11-22), so there is no name or avatar to show: where one would
+ * render, the control is the sign-in prompt instead.
  *
- * There is deliberately no sign-in here: the relay never reads this browser's
- * cookies, so a Google sign-in would connect nothing, and there is no
- * cookieless sign-in to offer (relay.md's phase-2 record: the TV OAuth
- * bearer authenticates and opens nothing). It is the fallback or anonymous,
- * and only the fallback makes this control appear at all.
+ * The prompt is presentation only — the extension that used to notice a
+ * Google sign-in is gone, so there is no sign-in this page could complete
+ * (relay.md phase 2: the TV OAuth bearer authenticates and opens nothing).
+ * Tapping it says so, in one honest line, rather than sending anyone to a
+ * form that would connect nothing.
  */
 export function AccountButton() {
   const status = useYtAuth();
-  const refresh = useRefreshYtAuth();
+  const [open, setOpen] = useState(false);
 
   if (status.state !== 'ready') return null;
   const { auth } = status;
 
-  // Signed in without the account being readable: playback still works (the
-  // jar signs regardless); the reason sits in the tooltip and a retry re-reads it.
-  if (!auth.active) {
-    return (
-      <button
-        className={pill}
-        title={auth.problem ?? undefined}
-        onClick={() => refresh.mutate()}
-        disabled={refresh.isPending}
-      >
-        {refresh.isPending ? 'Reading account…' : 'Retry Account Read'}
-      </button>
-    );
-  }
-
-  const active = auth.active;
+  // The relay's session: functional but anonymous. The features it provides
+  // are live; the account behind them is not shown. Without one the relay is
+  // anonymous-only, and the same honest prompt stands in either way.
+  const detail = auth.signedIn
+    ? 'BitChord on the web plays and saves through the server’s shared YouTube account — library, likes and history all work on it. There’s no personal sign-in here.'
+    : 'The server’s relay has no shared account configured, so nothing is playing as an account. There’s no personal sign-in here.';
   return (
-    <div
-      className="flex w-full min-w-0 items-center gap-2 rounded-nav px-1 py-1.5 type-body-reduced text-primary"
-      title="Playback is signed by the relay's shared account"
-    >
-      <Avatar src={active.avatarUrl} name={active.name} size={24} />
-      <span className="min-w-0 flex-1 truncate">{active.name}</span>
-      <span className={relayTag}>relay</span>
+    <div>
+      <button className={pill} aria-expanded={open} onClick={() => setOpen((now) => !now)}>
+        {auth.signedIn ? 'Sign in with YouTube' : 'Sign In'}
+      </button>
+      {open && <p className="mt-2 ps-1 type-callout text-secondary">{detail}</p>}
     </div>
   );
 }

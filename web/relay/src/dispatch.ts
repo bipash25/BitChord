@@ -14,31 +14,42 @@ import {
 import { RelayCache } from './cache.js';
 import type { FallbackCredential } from './fallback.js';
 import { MAX_RESPONSE_BYTES, UPSTREAM_TIMEOUT_MS } from './limits.js';
-import { CHROMIUM_USER_AGENT, isAddonUrl, isInnerTubeUrl, isLyricOrigin, LYRIC_ORIGINS, sanitiseHeaders, ytImpersonationFor } from './hosts.js';
+import { CHROMIUM_USER_AGENT, isAddonUrl, isInnerTubeUrl, isLyricOrigin, isStatsUrl, LYRIC_ORIGINS, sanitiseHeaders, ytImpersonationFor } from './hosts.js';
 import { serialise, toBytes } from './serialise.js';
 import { VERSION } from './version.js';
 
 /**
  * The relay's method dispatch — protocol check first, then a method switch,
  * with a `failure()` mapping errors onto the bridge's error codes — answering
- * the subset relay.md's table lists. Everything identity-holding is answered
- * as signed out or unsupported. The one deliberate exception
- * (`web/docs/private-deployment.md`) is invisible: when the operator has
- * loaded a fallback credential, the relay signs anonymous InnerTube calls
- * with it and tells the page nothing — no capability, no identity, no hint
- * that a session exists (the owner's decision, 2026-11-21). The credential
- * itself never crosses back to the page in any form.
+ * the subset relay.md's table lists. Identity-holding methods beyond
+ * `yt.authState` (channel switching, connect) stay unsupported: the relay
+ * holds exactly one session and no page ever chooses it. When the operator
+ * has loaded a fallback credential (`web/docs/private-deployment.md`), the
+ * features it provides are fully live — signed calls, the account's library,
+ * history, likes — while the account itself stays anonymous (the owner's
+ * corrected decision, 2026-11-22): no name, avatar, email or handle is ever
+ * read or returned, so no screen can show one. The credential itself never
+ * crosses back to the page in any form.
  */
 
-/** What `ping` answers (relay.md): the anonymous subset — fallback or not, since the credential is invisible. */
+/**
+ * What `ping` answers (relay.md) on a relay with no fallback credential: the
+ * anonymous subset — nothing can be signed, so neither session capability is
+ * claimed.
+ */
 export const RELAY_CAPABILITIES: Capability[] = ['yt', 'addon', 'lyrics'];
 
 /**
- * The identity methods always answer this static shape, fallback or not: the
- * fallback is invisible (the owner's decision, 2026-11-21), so the page is
- * never told a session exists and renders its ordinary signed-out states
- * while the relay signs playback silently. The operator's health check for
- * the credential is the probe, not this answer.
+ * The same answer with a fallback loaded: the session families are real now.
+ * `yt.auth` because the relay signs `auth: true` calls with the fallback;
+ * `yt.stats` because the playback-tracking pings the page's history
+ * reporting sends are served the same signed way.
+ */
+export const FALLBACK_CAPABILITIES: Capability[] = ['yt', 'yt.auth', 'yt.stats', 'addon', 'lyrics'];
+
+/**
+ * What `yt.authState` answers when no fallback is configured: the page gets
+ * its ordinary signed-out states, and every auth-gated flow stays off.
  */
 const SIGNED_OUT_YT: YtAuthState = {
   browserSignedIn: false,
@@ -46,6 +57,28 @@ const SIGNED_OUT_YT: YtAuthState = {
   signedIn: false,
   accounts: [],
   active: null,
+  problem: null,
+};
+
+/**
+ * What `yt.authState` answers when a fallback credential is loaded: the
+ * session is real and every signed flow works — library, history, likes,
+ * the signed playback retry — so `signedIn` is true and the page's machinery
+ * engages. But the account is the relay's throwaway, and the corrected
+ * invisibility ruling (`web/docs/private-deployment.md`, 2026-11-22) is that
+ * its identity never surfaces: no name, avatar, email or handle is read
+ * anywhere (the identity-reading code is gone), so the answer carries an
+ * `active` channel whose identity fields are empty — present because the
+ * app keys its query-cache resets on the chosen identity's id, empty so the
+ * UI renders its sign-in prompt where an account's own would have shown.
+ * `browserSignedIn` stays false: the browser holds nothing; the relay does.
+ */
+const SHARED_SESSION_YT: YtAuthState = {
+  browserSignedIn: false,
+  connected: true,
+  signedIn: true,
+  accounts: [],
+  active: { id: 'relay-session', name: '', handle: null, avatarUrl: null, brand: false, authUser: '0' },
   problem: null,
 };
 
@@ -189,11 +222,11 @@ export async function handle(request: BridgeRequest, deps: DispatchDeps): Promis
           version: VERSION,
           protocol: BRIDGE_PROTOCOL,
           browser: 'server',
-          // The fallback is invisible by the owner's decision (2026-11-21):
-          // it signs the calls silently, and `yt.auth` is never reported, so
-          // the page's account machinery renders its ordinary signed-out
-          // states while playback just works.
-          capabilities: RELAY_CAPABILITIES,
+          // The session families are reported only when they are real: with a
+          // fallback loaded the relay signs `auth` calls and the stats pings,
+          // so the page's account machinery engages; without one it keeps
+          // rendering its signed-out states.
+          capabilities: deps.fallback ? FALLBACK_CAPABILITIES : RELAY_CAPABILITIES,
         });
       case 'yt.fetch': {
         const params = (request.params ?? {}) as YtFetchParams;
@@ -216,8 +249,20 @@ export async function handle(request: BridgeRequest, deps: DispatchDeps): Promis
         const { method, url, headers, body } = prepare('yt.fetch', params, { forwardAuthorization: true });
         const impersonation = ytImpersonationFor(url);
         if (!impersonation) throw forbidden('yt.fetch', url);
+        // A playback-tracking ping is a side effect, not a read (hosts.ts):
+        // the page only ever sends GETs, and a served-from-cache answer would
+        // swallow the play it was meant to register.
+        const statsPing = isStatsUrl(url);
+        if (statsPing && method !== 'GET') {
+          throw Object.assign(new Error(`yt.fetch serves playback-tracking pings as GET only, not ${method}`), {
+            code: 'forbidden',
+          });
+        }
         const pageAuthorized = headers.authorization !== undefined;
-        const signOrigin = isInnerTubeUrl(url) ? impersonation.origin : undefined;
+        // InnerTube calls and the stats pings are the two families the
+        // fallback signs; the session bootstrap and BotGuard rows stay
+        // anonymous exactly as the impersonation table dresses them.
+        const signOrigin = isInnerTubeUrl(url) || statsPing ? impersonation.origin : undefined;
         // UNSIGNED_CLIENTS keep their calls anonymous even under a fallback:
         // their requests malformed with a session attached are refused outright.
         const unsignedClient = UNSIGNED_CLIENTS.has(bodyClientName(body) ?? '');
@@ -227,8 +272,9 @@ export async function handle(request: BridgeRequest, deps: DispatchDeps): Promis
             : null;
         // The credential must never become a cache key (hygiene), so the key
         // cannot tell the fallback's answers from a page credential's; calls
-        // carrying one therefore bypass the shared cache in both directions.
-        const cacheable = method === 'GET' && !pageAuthorized;
+        // carrying one therefore bypass the shared cache in both directions —
+        // and so do the stats pings, whose effect lives on YouTube's side.
+        const cacheable = method === 'GET' && !pageAuthorized && !statsPing;
         if (cacheable) {
           const cached = deps.cache.lookup('yt.fetch', url.href);
           if (cached) return okResponse(request.id, cached);
@@ -292,12 +338,13 @@ export async function handle(request: BridgeRequest, deps: DispatchDeps): Promis
         // A no-op: there is no permission prompt on a server, so nothing to open.
         return okResponse(request.id, {});
       case 'yt.authState': {
-        // Always the static signed-out answer, fallback or not: the
-        // credential is invisible (the owner's decision, 2026-11-21) — it
-        // signs silently, and the page is never told a session exists, so no
-        // name, avatar or email of the shared account can surface anywhere.
-        // The operator's health check is the probe, not this answer.
-        return okResponse(request.id, SIGNED_OUT_YT);
+        // With a fallback loaded the answer is the functional, identity-free
+        // session (SHARED_SESSION_YT): the features are live, the account is
+        // not. No upstream call is ever made to read one — the identity-read
+        // code is gone by design — so the operator's health check for the
+        // credential remains the probe, not this answer. Without a fallback
+        // the static signed-out answer stands.
+        return okResponse(request.id, deps.fallback ? SHARED_SESSION_YT : SIGNED_OUT_YT);
       }
       default:
         // Includes the retired `spotify.*` family (relay.md phase 2): Spotify

@@ -43,10 +43,14 @@ function youtubeText(auth: ReturnType<typeof useYtAuth>): string {
   // No yt.auth capability: the relay runs anonymous-only — no fallback account is configured.
   if (auth.state === 'unavailable') return 'Not signed in';
   const { browserSignedIn, connected, signedIn, active } = auth.auth;
-  // The relay's fallback identity (web/docs/private-deployment.md): playback
-  // is signed by the relay's throwaway account, not a session this browser
-  // holds — signedIn without browserSignedIn. Name whose account it is.
-  if (signedIn && active && !browserSignedIn) return `Listening as ${active.name} · relay account`;
+  // The relay's session (web/docs/private-deployment.md) is functional but
+  // anonymous: its account signs playback, library, likes and history, while
+  // its name never reaches the page (the corrected invisibility ruling,
+  // 2026-11-22) — so where the account's own name would stand, this row
+  // carries the sign-in prompt instead. The browser holds no session of its
+  // own in any relay shape, so browserSignedIn paths are dead here but kept
+  // honest for any future transport that does hold one.
+  if (signedIn && !browserSignedIn) return 'Sign in with YouTube';
   if (!browserSignedIn) return 'Not signed in';
   if (!connected) return 'Disconnected';
   return active ? active.name : 'Signed in';
@@ -73,6 +77,11 @@ export default function SettingsPage() {
   // The relay is the only transport, so this is just "did it answer". AutoMix's
   // Web Audio graph would be silent over it, so the setting says so (relay.md §5).
   const relay = present && extension.extension.info.browser === 'server';
+  // Whether plays can be reported to the account's YouTube Music history: the
+  // transport must sign the stats pings (the relay reports `yt.stats` only when
+  // a fallback credential is loaded), so the toggle is shown only when it
+  // would do something.
+  const historyReporting = present && extension.extension.info.capabilities.includes('yt.stats');
 
   return (
     <div className={settingsUi.centered}>
@@ -93,18 +102,16 @@ export default function SettingsPage() {
             <SpotifyIntegration />
           </div>
         </section>
-        <section className={`${settingsUi.group} mt-3 empty:hidden`}>
-          <Toggle
-            label="Share Listening Activity to YouTube"
-            detail={
-              relay
-                ? 'The relay plays on its shared account and reports no play history.'
-                : 'Songs you play here go to your YouTube Music history and shape its recommendations.'
-            }
-            checked={shareHistory}
-            onChange={setShareHistory}
-          />
-        </section>
+        {historyReporting && (
+          <section className={`${settingsUi.group} mt-3 empty:hidden`}>
+            <Toggle
+              label="Share Listening Activity to YouTube"
+              detail="Songs you play here go to the YouTube Music history of the account playing them, and shape its recommendations."
+              checked={shareHistory}
+              onChange={setShareHistory}
+            />
+          </section>
+        )}
 
         <h2 className={settingsUi.sectionHeader}>Apple Music</h2>
         <section className={settingsUi.group}>

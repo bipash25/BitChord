@@ -12,10 +12,10 @@ import { readFileSync, writeFileSync } from 'node:fs';
  *
  * Hygiene is this module's spine, because the credential is a cookie: the jar
  * and the signature it builds never appear in a log line, an error, a cache
- * key or an answer to the page (names and pictures only), and the jar is
- * attached only to the two InnerTube origins the impersonation table dresses
- * calls as. It is never the page's to send — a page-supplied cookie is
- * dropped before any of this runs.
+ * key or an answer to the page, and the jar is attached only to the two
+ * YouTube origins the impersonation table dresses signed calls as — the
+ * InnerTube rows and the playback-stats pings. It is never the page's to
+ * send — a page-supplied cookie is dropped before any of this runs.
  */
 
 const MUSIC_ORIGIN = 'https://music.youtube.com';
@@ -131,12 +131,13 @@ export function sapisidhash(secret: string, origin: string, timestampSeconds: nu
 // ---- the credential ------------------------------------------------------------
 
 /**
- * The jar as a live credential: what signs a call. Invisible by design —
- * nothing about the account it holds is ever answered to the page
- * (the owner's decision, 2026-11-21), so it has no identity to report; the
- * probe is the operator's health check instead. The cookie value and the
- * SAPISID secret live in memory only; nothing returned to a caller ever
- * carries either.
+ * The jar as a live credential: what signs a call. Anonymous by design —
+ * nothing about the account it holds is ever read or answered to the page
+ * (the owner's corrected decision, 2026-11-22: the features the account
+ * provides are fully live, its identity never surfaces), so it has no
+ * identity to report; the probe is the operator's health check instead. The
+ * cookie value and the SAPISID secret live in memory only; nothing returned
+ * to a caller ever carries either.
  *
  * The jar is *living*, because a static one is measured to die within about a
  * quarter hour: Google rotates the session's cookies, and whichever side
@@ -222,10 +223,10 @@ export class FallbackCredential {
       }
     }
     if (changed) {
-      // The living jar's heartbeat, and — now that authState is invisible —
-      // the operator's only ongoing signal that the session is still being
-      // renewed: a log line per absorption, carrying the names YouTube
-      // rotated and nothing else (the value is the session itself).
+      // The living jar's heartbeat, and — authState never reading the
+      // account — the operator's only ongoing signal that the session is
+      // still being renewed: a log line per absorption, carrying the names
+      // YouTube rotated and nothing else (the value is the session itself).
       console.log(`BitChord relay: fallback jar absorbed a rotation: ${names.join(', ')}`);
       this.rotate();
     }
