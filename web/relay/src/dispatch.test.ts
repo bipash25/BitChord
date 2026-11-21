@@ -470,19 +470,33 @@ describe('the fallback credential (private-deployment.md)', () => {
         }),
       credential,
     );
-    const url = 'https://www.youtube.com/youtubei/v1/player';
-    const first = (await handle(request('yt.fetch', { url, method: 'POST', body: '{"videoId":"x"}' }), deps)) as {
-      ok: boolean;
-      result: HttpResponse;
-    };
-    // The rotation stays between the relay and YouTube: the envelope carries
-    // no set-cookie at all, so no session material crosses to the page.
-    expect(first.ok).toBe(true);
-    expect(first.result.headers['set-cookie']).toBeUndefined();
-    // The next signed call signs with the rotated value — the living jar.
-    await handle(request('yt.fetch', { url, method: 'POST', body: '{"videoId":"y"}' }), deps);
-    const second = (fetches[1]?.init?.headers ?? {}) as Record<string, string>;
-    expect(second['cookie']).toContain('__Secure-1PSIDTS=rotated');
+    const logged: string[] = [];
+    const log = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      logged.push(args.map(String).join(' '));
+    });
+    try {
+      const url = 'https://www.youtube.com/youtubei/v1/player';
+      const first = (await handle(request('yt.fetch', { url, method: 'POST', body: '{"videoId":"x"}' }), deps)) as {
+        ok: boolean;
+        result: HttpResponse;
+      };
+      // The rotation stays between the relay and YouTube: the envelope carries
+      // no set-cookie at all, so no session material crosses to the page.
+      expect(first.ok).toBe(true);
+      expect(first.result.headers['set-cookie']).toBeUndefined();
+      // The next signed call signs with the rotated value — the living jar.
+      await handle(request('yt.fetch', { url, method: 'POST', body: '{"videoId":"y"}' }), deps);
+      const second = (fetches[1]?.init?.headers ?? {}) as Record<string, string>;
+      expect(second['cookie']).toContain('__Secure-1PSIDTS=rotated');
+      // The rotation's log line — the operator's heartbeat for the living
+      // jar — says the name and never the value or the jar it landed in.
+      const line = logged.join('\n');
+      expect(line).toContain('__Secure-1PSIDTS');
+      expect(line).not.toContain('rotated');
+      expect(line).not.toContain('burner-secret');
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it("leaves a call carrying the page's own Authorization untouched, and its answer out of the shared cache", async () => {

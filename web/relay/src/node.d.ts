@@ -23,6 +23,13 @@ declare module 'node:fs' {
   export function readFileSync(path: string | URL): Uint8Array;
   /** Persists the living jar as YouTube rotates the fallback session. */
   export function writeFileSync(path: string | URL, data: string): void;
+  /** The persist round-trip test cleans up its scratch file. */
+  export function rmSync(path: string | URL, options?: { force?: boolean }): void;
+}
+
+declare module 'node:os' {
+  /** Where the persist round-trip test parks its scratch file. */
+  export function tmpdir(): string;
 }
 
 declare module 'node:crypto' {

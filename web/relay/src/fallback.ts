@@ -114,17 +114,21 @@ export function sapisidhash(secret: string, origin: string, timestampSeconds: nu
  * carries either.
  *
  * The jar is *living*, because a static one is measured to die within about a
- * quarter hour: Google rotates the timestamp cookies (`__Secure-1PSIDTS` and
- * friends) on every authenticated response, and whichever side holds the
- * session — the browser the jar was exported from, if it stayed signed in —
- * rotates the other side's copy out from under it (yt-dlp's "no longer valid;
- * likely rotated in the browser", 2026-11-21, after a jar that had resolved
- * itag 251 from this same egress half an hour earlier). This relay is the one
- * making the account's calls, so it is the side that keeps the session: the
- * rotations YouTube sends while serving a signed call are absorbed into the
- * live jar, the next call signs with them, and the jar is persisted back to
- * [persistPath] (as one raw `Cookie:` line) so a restart continues the same
- * session instead of a dead export.
+ * quarter hour: Google rotates the session's cookies, and whichever side
+ * stays active rotates the other side's copy out from under it (yt-dlp's "no
+ * longer valid; likely rotated in the browser", 2026-11-21, after a jar that
+ * had resolved itag 251 from this same egress half an hour earlier). This
+ * relay is the side that holds the session now, so it is the side that must
+ * keep it rotated — but the relay's own InnerTube traffic can't do it:
+ * measured 2026-11-21, InnerTube responses carry **no Set-Cookie at all**, so
+ * absorption on signed calls never fires (the seeded file was never
+ * rewritten, and a jar refreshed only by what InnerTube sends stays exactly
+ * as stale as the export). The rotations arrive on *page loads* instead — a
+ * HEAD of the www homepage answers the jar with a full session re-issue — so
+ * the session keeper (`keeper.ts`) harvests there: rotations are absorbed
+ * into the live jar, the next call signs with them, and the jar is persisted
+ * back to [persistPath] (as one raw `Cookie:` line) so a restart continues
+ * the same session instead of a dead export.
  */
 export class FallbackCredential {
   private readonly jar: Map<string, string>;
@@ -143,12 +147,14 @@ export class FallbackCredential {
 
   /**
    * The Set-Cookie lines YouTube sent while serving one of this credential's
-   * signed calls, merged into the live jar. Returns whether anything changed.
-   * Foreign domains and names the header grammar rejects are ignored; an empty
-   * value is a deletion, so the cookie stops being sent rather than lingering.
+   * signed calls — or a session-keeper harvest (`keeper.ts`) — merged into the
+   * live jar. Returns whether anything changed. Foreign domains and names the
+   * header grammar rejects are ignored; an empty value is a deletion, so the
+   * cookie stops being sent rather than lingering.
    */
   absorbSetCookies(lines: readonly string[]): boolean {
     let changed = false;
+    const names: string[] = [];
     for (const line of lines) {
       const first = line.indexOf(';');
       const pair = first === -1 ? line : line.slice(0, first);
@@ -166,16 +172,27 @@ export class FallbackCredential {
       // to be ours too before its rotation is trusted.
       if (domain && !isYtHost(domain)) continue;
       if (value === '') {
-        if (this.jar.delete(name)) changed = true;
+        if (this.jar.delete(name)) {
+          changed = true;
+          names.push(name);
+        }
         continue;
       }
       if (!isCookieValue(value)) continue;
       if (this.jar.get(name) !== value) {
         this.jar.set(name, value);
         changed = true;
+        names.push(name);
       }
     }
-    if (changed) this.rotate();
+    if (changed) {
+      // The living jar's heartbeat, and — now that authState is invisible —
+      // the operator's only ongoing signal that the session is still being
+      // renewed: a log line per absorption, carrying the names YouTube
+      // rotated and nothing else (the value is the session itself).
+      console.log(`BitChord relay: fallback jar absorbed a rotation: ${names.join(', ')}`);
+      this.rotate();
+    }
     return changed;
   }
 
@@ -214,6 +231,26 @@ export class FallbackCredential {
     const headers: Record<string, string> = { cookie: this.cookie, 'x-goog-authuser': '0' };
     if (this.secret) headers.authorization = sapisidhash(this.secret, origin, timestampSeconds);
     return headers;
+  }
+
+  /**
+   * The headers a signed-in browser's *navigation* to [origin] would carry:
+   * the jar as its Cookie header, and nothing else — a page load sends no
+   * SAPISIDHASH and no authUser, and the session keeper's harvest
+   * (`keeper.ts`) is exactly that shape. Measured 2026-11-21: the www
+   * homepage answered it with the full session re-issue (SID, HSID, SSID,
+   * APISID, SAPISID, `__Secure-1PSID`, the SIDCC pair) while every InnerTube
+   * response carried no Set-Cookie at all — page loads are the only place
+   * YouTube rotates the session, so they are the only thing the relay can
+   * harvest. Same two-origin fence as sign().
+   */
+  navigationHeaders(origin: string): { cookie: string } {
+    if (!SIGNED_ORIGINS.has(origin)) {
+      throw Object.assign(new Error(`the fallback credential only navigates ${MUSIC_ORIGIN} and ${WWW_ORIGIN}`), {
+        code: 'internal',
+      });
+    }
+    return { cookie: this.cookie };
   }
 }
 

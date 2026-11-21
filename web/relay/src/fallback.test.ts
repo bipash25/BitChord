@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
-import { describe, expect, it, vi } from 'vitest';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FallbackCredential, parseCookieJar, sapisidhash } from './fallback.js';
 
 /**
@@ -83,6 +85,23 @@ describe('FallbackCredential.absorbSetCookies', () => {
     expect(c.sign('https://music.youtube.com', 0)['cookie']).toContain('SAPISID=secret');
   });
 
+  it('logs the rotation it absorbed by name only — the value is the session itself', () => {
+    const logged: string[] = [];
+    const log = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      logged.push(args.map(String).join(' '));
+    });
+    try {
+      const c = credential();
+      c.absorbSetCookies(['__Secure-1PSIDTS=rotated; Path=/; Domain=.youtube.com; Secure']);
+      const line = logged.join('\n');
+      expect(line).toContain('__Secure-1PSIDTS'); // the name, said aloud
+      expect(line).not.toContain('rotated'); // the value, never
+      expect(line).not.toContain('secret'); // the jar's other secret, never either
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it('reports no change when YouTube restates what the jar already holds', () => {
     const c = credential();
     expect(c.absorbSetCookies(['SID=stale; Path=/; Domain=.youtube.com'])).toBe(false);
@@ -134,6 +153,70 @@ describe('FallbackCredential.sign', () => {
   it('refuses an origin that is not one of the two InnerTube origins', () => {
     const fallback = new FallbackCredential(parseCookieJar('SAPISID=s'));
     expect(() => fallback.sign('https://evil.example', 1)).toThrow(/only signs/);
+  });
+});
+
+describe('FallbackCredential.navigationHeaders', () => {
+  it('carries the jar the way a page load would: the cookie alone, no signature, no authUser', () => {
+    const fallback = new FallbackCredential(parseCookieJar('SID=a; SAPISID=s'));
+    expect(fallback.navigationHeaders('https://www.youtube.com')).toEqual({ cookie: 'SID=a; SAPISID=s' });
+    expect(fallback.navigationHeaders('https://music.youtube.com')).toEqual({ cookie: 'SID=a; SAPISID=s' });
+  });
+
+  it('refuses an origin outside the two YouTube origins, exactly as sign does', () => {
+    const fallback = new FallbackCredential(parseCookieJar('SAPISID=s'));
+    expect(() => fallback.navigationHeaders('https://accounts.google.com')).toThrow(/only navigates/);
+  });
+});
+
+describe('the persist round-trip', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('rewrites the seed file as one raw Cookie: line a restart continues from', () => {
+    vi.useFakeTimers();
+    const path = `${tmpdir()}/bitchord-fallback-persist.test.txt`;
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const credential = new FallbackCredential(parseCookieJar('SID=stale; SAPISID=secret'), path);
+      expect(credential.absorbSetCookies(['__Secure-1PSIDTS=fresh; Path=/; Domain=.youtube.com; Secure'])).toBe(true);
+      vi.advanceTimersByTime(1_000); // the trailing persist's debounce
+      const persisted = new TextDecoder().decode(readFileSync(path));
+      expect(persisted.startsWith('Cookie: ')).toBe(true);
+      expect(persisted).toContain('__Secure-1PSIDTS=fresh');
+      // The shape the relay itself boots from: a restart reloads this as a jar
+      // and continues the same session instead of the dead export.
+      expect(parseCookieJar(persisted).get('__Secure-1PSIDTS')).toBe('fresh');
+    } finally {
+      log.mockRestore();
+      rmSync(path, { force: true });
+    }
+  });
+
+  it('collapses a burst of rotations into one write', () => {
+    vi.useFakeTimers();
+    const path = `${tmpdir()}/bitchord-fallback-burst.test.txt`;
+    // The file exists already — it is the seed the relay booted from — so
+    // "nothing written yet" is observable as the seed still sitting there.
+    writeFileSync(path, 'Cookie: SID=stale; SAPISID=secret\n');
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const credential = new FallbackCredential(parseCookieJar('SID=stale; SAPISID=secret'), path);
+      credential.absorbSetCookies(['__Secure-1PSIDTS=first; Domain=.youtube.com']);
+      credential.absorbSetCookies(['SIDCC=second; Domain=.youtube.com']);
+      // Still inside the debounce window: the seed is untouched.
+      vi.advanceTimersByTime(500);
+      expect(new TextDecoder().decode(readFileSync(path))).toBe('Cookie: SID=stale; SAPISID=secret\n');
+      vi.advanceTimersByTime(500);
+      // One write, carrying both rotations.
+      const persisted = new TextDecoder().decode(readFileSync(path));
+      expect(persisted).toContain('SIDCC=second');
+      expect(persisted).toContain('__Secure-1PSIDTS=first');
+    } finally {
+      log.mockRestore();
+      rmSync(path, { force: true });
+    }
   });
 });
 

@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { loadFallbackCredential } from './fallback.js';
 import { dispatchDeps, handle, type DispatchDeps } from './dispatch.js';
 import { isBridgeRequest, type BridgeRequest } from './contract.js';
+import { HARVEST_INTERVAL_MS, startSessionKeeper } from './keeper.js';
 import { BodyTooLargeError, IpLimiter, MAX_BODY_BYTES, readBody } from './limits.js';
 import { VERSION } from './version.js';
 
@@ -51,6 +52,11 @@ const limiter = new IpLimiter();
 const fallback = loadFallbackCredential(process.env.RELAY_FALLBACK_COOKIES_FILE);
 /** The dispatcher's wiring: the server's fetch and cache, plus the fallback. */
 const deps: DispatchDeps = { ...dispatchDeps, fallback };
+// The jar the relay just loaded is as stale as the browser that exported it
+// was parked, and nothing the relay proxied would ever rotate it (InnerTube
+// answers carry no Set-Cookie — keeper.ts's header). So the keeper starts with
+// the relay: one immediate harvest, then one per interval.
+if (fallback) startSessionKeeper({ fetchImpl: fetch, credential: fallback });
 
 /** Reads one header, joining a repeated one as HTTP does. */
 function header(headers: IncomingMessage['headers'], name: string): string | undefined {
@@ -170,7 +176,11 @@ server.listen(port, () => {
   console.log(`allowed origins: ${[...allowedOrigins].join(', ')}`);
   if (trustProxy) console.log('trusting X-Forwarded-For (RELAY_TRUST_PROXY)');
   // Names the mode, never the jar: the credential's value appears in no log line.
-  if (fallback) console.log('fallback credential loaded: anonymous InnerTube calls will be signed by it');
+  if (fallback)
+    console.log(
+      `fallback credential loaded: anonymous InnerTube calls will be signed by it; ` +
+        `the session keeper refreshes the jar every ${Math.round(HARVEST_INTERVAL_MS / 60_000)} minutes`,
+    );
 });
 
 server.on('error', (error) => {
