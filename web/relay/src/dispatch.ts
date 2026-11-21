@@ -6,35 +6,38 @@ import {
   type BridgeRequest,
   type BridgeResponse,
   type Capability,
-  type DiscordState,
   type HttpRequest,
   type HttpResponse,
-  type SpotifyAuthState,
   type YtAuthState,
   type YtFetchParams,
 } from './contract.js';
 import { RelayCache } from './cache.js';
+import type { FallbackCredential } from './fallback.js';
 import { MAX_RESPONSE_BYTES, UPSTREAM_TIMEOUT_MS } from './limits.js';
-import { CHROMIUM_USER_AGENT, isAddonUrl, isLyricOrigin, LYRIC_ORIGINS, sanitiseHeaders, ytImpersonationFor } from './hosts.js';
+import { CHROMIUM_USER_AGENT, isAddonUrl, isInnerTubeUrl, isLyricOrigin, LYRIC_ORIGINS, sanitiseHeaders, ytImpersonationFor } from './hosts.js';
 import { serialise, toBytes } from './serialise.js';
 import { VERSION } from './version.js';
 
 /**
- * The relay's method dispatch: the same shape as the extension's dispatcher
- * (`web/extension/entrypoints/background.ts`) — protocol check first, then a
- * method switch, with a `failure()` mapping errors onto the bridge's error
- * codes — answering the anonymous subset relay.md's table lists. Everything
- * identity-holding is answered as signed out or unsupported: the relay holds
- * no credentials, by design.
+ * The relay's method dispatch — protocol check first, then a method switch,
+ * with a `failure()` mapping errors onto the bridge's error codes — answering
+ * the subset relay.md's table lists. Everything identity-holding is answered
+ * as signed out or unsupported, with one deliberate exception
+ * (`web/docs/private-deployment.md`): when the operator has loaded a fallback
+ * credential, the relay signs anonymous InnerTube calls with it and
+ * `yt.authState` answers the throwaway's identity. The credential itself
+ * never crosses back to the page in any form.
  */
 
-/** What `ping` answers (relay.md): the anonymous subset, nothing identity-shaped. */
+/** What `ping` answers (relay.md): the anonymous subset. `yt.auth` joins it when a fallback credential is loaded. */
 export const RELAY_CAPABILITIES: Capability[] = ['yt', 'addon', 'lyrics'];
 
 /**
- * The relay holds no identity and watches no cookies, so the identity methods
- * always answer these static shapes. The UI already renders "Needs the
- * extension" for a transport that lacks the matching capability.
+ * Without a fallback credential the relay holds no identity and watches no
+ * cookies, so the identity methods answer these static shapes. The UI already
+ * renders its "not signed in" states for a transport that lacks the matching
+ * capability. With one loaded, `yt.authState` answers the fallback's identity
+ * instead (`fallback.ts`).
  */
 const SIGNED_OUT_YT: YtAuthState = {
   browserSignedIn: false,
@@ -45,31 +48,20 @@ const SIGNED_OUT_YT: YtAuthState = {
   problem: null,
 };
 
-const SIGNED_OUT_SPOTIFY: SpotifyAuthState = {
-  browserSignedIn: false,
-  connected: false,
-  signedIn: false,
-  user: null,
-  problem: null,
-};
-
-const DISCORD_OFF: DiscordState = {
-  available: false,
-  connected: false,
-  enabled: false,
-  user: null,
-  gateway: 'off',
-  problem: null,
-};
-
-/** What a dispatch needs from the world: the upstream fetch and the cache. Injected so tests run without a network. */
+/** What a dispatch needs from the world: the upstream fetch, the cache, and the operator's fallback credential (or null). Injected so tests run without a network. */
 export interface DispatchDeps {
   fetchImpl: typeof globalThis.fetch;
   cache: RelayCache;
+  /**
+   * The private deployment's fallback credential (`web/docs/private-deployment.md`),
+   * loaded from `RELAY_FALLBACK_COOKIES_FILE` at startup by index.ts. Null on
+   * a public relay, which stays anonymous-only.
+   */
+  fallback: FallbackCredential | null;
 }
 
-/** The server's own wiring. */
-export const dispatchDeps: DispatchDeps = { fetchImpl: fetch, cache: new RelayCache() };
+/** The server's own wiring; index.ts spreads the loaded fallback into it. */
+export const dispatchDeps: DispatchDeps = { fetchImpl: fetch, cache: new RelayCache(), fallback: null };
 
 /** One proxied request, prepared and validated. */
 interface Prepared {
@@ -84,7 +76,11 @@ interface Prepared {
  * page is a typed partner, the relay answers anyone who posts to /bridge, so
  * the shape is checked before anything is fetched.
  */
-function prepare(methodName: string, params: HttpRequest): Prepared {
+function prepare(
+  methodName: string,
+  params: HttpRequest,
+  options: { forwardAuthorization?: boolean } = {},
+): Prepared {
   if (typeof params.url !== 'string' || !params.url) {
     throw Object.assign(new Error(`${methodName} needs a url`), { code: 'protocol' });
   }
@@ -95,40 +91,81 @@ function prepare(methodName: string, params: HttpRequest): Prepared {
   if (method !== 'GET' && method !== 'POST' && method !== 'HEAD') {
     throw Object.assign(new Error(`The bridge speaks GET, POST and HEAD, not ${String(method)}`), { code: 'forbidden' });
   }
-  const headers = sanitiseHeaders((params.headers ?? {}) as Record<string, string>);
+  const headers = sanitiseHeaders((params.headers ?? {}) as Record<string, string>, options);
   const body =
     params.body === undefined ? undefined : params.bodyEncoding === 'base64' ? toBytes(params.body) : params.body;
-  // A bad url throws here and lands in failure() as a network error, as the extension's did.
+  // A bad url throws here and lands in failure() as a network error.
   return { method, url: new URL(params.url), headers, body: body as BodyInit | undefined };
 }
 
-/** The allowlist's refusal, in the extension's words (ytFetch.ts's forbidden()). */
+/** The allowlist's refusal, naming exactly what was asked for. */
 function forbidden(methodName: string, url: URL): Error {
   return Object.assign(new Error(`${methodName} doesn't serve ${url.origin}${url.pathname}`), { code: 'forbidden' });
 }
 
-/** Performs one upstream fetch and serialises its answer, capped and time-boxed. */
+/**
+ * InnerTube clients that take no session signals at all — InnerTubeX sends
+ * nothing for VISIONOS, and even the extension stripped headers off
+ * `c=VISIONOS` media URLs. Attaching the fallback's cookie and SAPISIDHASH to
+ * such a client's call makes YouTube refuse the whole request with a 400
+ * (measured: the probe's VISIONOS player call through a fallback-loaded relay,
+ * 2026-11-21), so their calls stay anonymous and the client walk falls through
+ * to a web client the fallback does sign.
+ */
+const UNSIGNED_CLIENTS = new Set(['VISIONOS']);
+
+/**
+ * The `context.client.clientName` of an InnerTube POST body, when the body is
+ * JSON that carries one. Untrusted input: anything unparseable simply has no
+ * client name, and an absent name signs (the web clients the fallback exists
+ * for all say who they are).
+ */
+function bodyClientName(body: BodyInit | undefined): string | null {
+  if (typeof body !== 'string' || !body.startsWith('{')) return null;
+  try {
+    const client = (JSON.parse(body) as { context?: { client?: { clientName?: unknown } } }).context?.client?.clientName;
+    return typeof client === 'string' ? client : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Performs one upstream fetch and serialises its answer, capped and time-boxed.
+ * When [absorb] is the fallback this call was signed with, YouTube's Set-Cookie
+ * rotations are collected before serialisation flattens duplicate headers and
+ * merged into the live jar; either way, `set-cookie` never reaches the page —
+ * the rotations belong to the credential, and the rest is session material no
+ * caller has business seeing through the envelope.
+ */
 async function upstream(
   deps: DispatchDeps,
   url: URL,
   init: { method: Prepared['method']; headers: Record<string, string>; body: BodyInit | undefined },
+  absorb?: FallbackCredential | null,
 ): Promise<HttpResponse> {
   const response = await deps.fetchImpl(url, {
     method: init.method,
     headers: init.headers,
     body: init.body,
     redirect: 'follow',
-    // The relay holds no cookies; "omit" is that fact in the one vocabulary Node and the DOM share.
+    // No ambient cookie store rides along: "omit" says so in the one vocabulary
+    // Node and the DOM share. The fallback's jar, when there is one, is attached
+    // explicitly in init.headers — never left to the fetch's own cookie handling.
     credentials: 'omit',
     signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
   });
-  return serialise(response, MAX_RESPONSE_BYTES);
+  const rotations = (response.headers as { getSetCookie?: () => string[] }).getSetCookie?.() ?? [];
+  if (absorb && rotations.length) absorb.absorbSetCookies(rotations);
+  const serialised = await serialise(response, MAX_RESPONSE_BYTES);
+  delete serialised.headers['set-cookie'];
+  return serialised;
 }
 
 /**
  * Answers one bridge request. Never throws: every failure lands in the
- * envelope as a `BridgeResponse` error, exactly as the extension's
- * dispatcher does, so the page sees the code rather than a dropped call.
+ * envelope as a `BridgeResponse` error, so the page sees the code rather
+ * than a dropped call.
  */
 export async function handle(request: BridgeRequest, deps: DispatchDeps): Promise<BridgeResponse> {
   if (request.protocol !== BRIDGE_PROTOCOL) {
@@ -145,27 +182,62 @@ export async function handle(request: BridgeRequest, deps: DispatchDeps): Promis
           version: VERSION,
           protocol: BRIDGE_PROTOCOL,
           browser: 'server',
-          capabilities: RELAY_CAPABILITIES,
+          // The fallback credential is the one thing that lets this transport
+          // sign YouTube requests, which is what `yt.auth` means. Reporting it
+          // only when one is loaded keeps the page's account machinery quiet
+          // on an anonymous relay.
+          capabilities: deps.fallback ? [...RELAY_CAPABILITIES, 'yt.auth'] : RELAY_CAPABILITIES,
         });
       case 'yt.fetch': {
         const params = (request.params ?? {}) as YtFetchParams;
-        if (params.auth === true) {
-          // relay.md's exact refusal: it points at the transport that can.
-          return errorResponse(request.id, 'unauthenticated', "The relay can't sign YouTube requests. The extension can.");
+        if (params.auth === true && !deps.fallback) {
+          // The refusal stands when there is no fallback: the relay holds no
+          // YouTube session and won't pretend to sign one. With a fallback
+          // loaded, an auth call is served exactly like an anonymous one —
+          // signed with the account the relay holds, because the page has no
+          // credential of its own to add (private-deployment.md: "auth: true
+          // stops answering unauthenticated").
+          return errorResponse(
+            request.id,
+            'unauthenticated',
+            "The relay can't sign YouTube requests; its operator can set RELAY_FALLBACK_COOKIES_FILE to a shared account.",
+          );
         }
-        const { method, url, headers, body } = prepare('yt.fetch', params);
+        // A page-held Authorization is forwarded untouched (see hosts.ts), so
+        // the caller bringing its own credential keeps it: the fallback signs
+        // only the calls with none.
+        const { method, url, headers, body } = prepare('yt.fetch', params, { forwardAuthorization: true });
         const impersonation = ytImpersonationFor(url);
         if (!impersonation) throw forbidden('yt.fetch', url);
-        if (method === 'GET') {
+        const pageAuthorized = headers.authorization !== undefined;
+        const signOrigin = isInnerTubeUrl(url) ? impersonation.origin : undefined;
+        // UNSIGNED_CLIENTS keep their calls anonymous even under a fallback:
+        // their requests malformed with a session attached are refused outright.
+        const unsignedClient = UNSIGNED_CLIENTS.has(bodyClientName(body) ?? '');
+        const signed =
+          deps.fallback && signOrigin && !pageAuthorized && !unsignedClient
+            ? deps.fallback.sign(signOrigin, Math.floor(Date.now() / 1000))
+            : null;
+        // The credential must never become a cache key (hygiene), so the key
+        // cannot tell the fallback's answers from a page credential's; calls
+        // carrying one therefore bypass the shared cache in both directions.
+        const cacheable = method === 'GET' && !pageAuthorized;
+        if (cacheable) {
           const cached = deps.cache.lookup('yt.fetch', url.href);
           if (cached) return okResponse(request.id, cached);
         }
-        const response = await upstream(deps, url, {
-          method,
-          headers: { ...headers, ...impersonation, 'user-agent': CHROMIUM_USER_AGENT },
-          body,
-        });
-        if (method === 'GET') deps.cache.store('yt.fetch', url.href, response);
+        const response = await upstream(
+          deps,
+          url,
+          {
+            method,
+            headers: { ...headers, ...impersonation, ...(signed ?? {}), 'user-agent': CHROMIUM_USER_AGENT },
+            body,
+          },
+          // The call's rotations belong to the credential that signed it.
+          signed ? deps.fallback : undefined,
+        );
+        if (cacheable) deps.cache.store('yt.fetch', url.href, response);
         return okResponse(request.id, response);
       }
       case 'addon.fetch': {
@@ -190,8 +262,8 @@ export async function handle(request: BridgeRequest, deps: DispatchDeps): Promis
         const { method, url, headers, body } = prepare('lyrics.fetch', params);
         if (!isLyricOrigin(url)) throw forbidden('lyrics.fetch', url);
         // No cache: relay.md caches only the yt and addon families, and lyric
-        // answers are small enough to stay fresh. The extension's per-host
-        // grants are not mirrored either — the relay needs none.
+        // answers are small enough to stay fresh. Per-host grants are not
+        // mirrored either — the relay needs none.
         const response = await upstream(deps, url, {
           method,
           headers: { ...headers, 'user-agent': CHROMIUM_USER_AGENT },
@@ -212,18 +284,21 @@ export async function handle(request: BridgeRequest, deps: DispatchDeps): Promis
       case 'lyrics.requestPermissions':
         // A no-op: there is no permission prompt on a server, so nothing to open.
         return okResponse(request.id, {});
-      case 'yt.authState':
-        return okResponse(request.id, SIGNED_OUT_YT);
-      case 'spotify.authState':
-        return okResponse(request.id, SIGNED_OUT_SPOTIFY);
-      case 'discord.state':
-        return okResponse(request.id, DISCORD_OFF);
+      case 'yt.authState': {
+        // Without a fallback the static signed-out answer stands. With one,
+        // the identity to answer is the throwaway's: browserSignedIn stays
+        // false (this browser holds nothing) while signedIn is true, and the
+        // account is read through the signed session once, then cached in
+        // memory (fallback.ts).
+        if (!deps.fallback) return okResponse(request.id, SIGNED_OUT_YT);
+        const refresh = (request.params as { refresh?: unknown } | null | undefined)?.refresh === true;
+        return okResponse(request.id, await deps.fallback.authState(deps.fetchImpl, refresh));
+      }
       default:
-        return errorResponse(
-          request.id,
-          'unsupported',
-          `${request.method} isn't served by the relay; the BitChord extension serves it.`,
-        );
+        // Includes the retired `spotify.*` family (relay.md phase 2): Spotify
+        // is the page's own PKCE business now, so a stale page still gets a
+        // clean `unsupported` rather than a hang.
+        return errorResponse(request.id, 'unsupported', `${request.method} isn't served by the relay.`);
     }
   } catch (error) {
     return failure(request.id, error);
@@ -231,11 +306,10 @@ export async function handle(request: BridgeRequest, deps: DispatchDeps): Promis
 }
 
 /**
- * The error-code mapping, mirroring background.ts's failure(). Two additions
- * a server needs: `protocol` and `network` pass through, because a request
- * whose params don't speak the contract, and the relay's own upstream timeout
- * and response cap, are failures the extension never had to name (its fetches
- * simply threw, and its page was a typed partner).
+ * The error-code mapping. `protocol` and `network` pass through, because a
+ * request whose params don't speak the contract, and the relay's own upstream
+ * timeout and response cap, are failures the page never used to see from a
+ * partner that threw and was caught.
  */
 function failure(id: string, error: unknown): BridgeResponse {
   const known = (error as { code?: string }).code;

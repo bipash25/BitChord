@@ -8,9 +8,10 @@ import { getBridge } from '@/extension/bridge';
  *
  * - `direct`: from the page, for the hosts that allow cross-site requests;
  *   if the browser blocks it anyway (BetterLyrics allows some origins and
- *   not others), it's retried through the extension.
- * - `extension`: always through the extension's `lyrics.fetch`, for hosts
- *   that send no CORS headers or need headers a page can't set.
+ *   not others), it's retried through the relay.
+ * - `extension`: always through the transport's `lyrics.fetch`, for hosts
+ *   that send no CORS headers or need headers a page can't set. (The route
+ *   is named for the extension that used to be the only transport.)
  */
 
 /** Hosts the page can't reach itself: KuGou, Musixmatch, Genius and Apple's catalogue (for PaxSenix). */
@@ -30,7 +31,7 @@ export const LYRIC_EXTENSION_ORIGINS = [
 const DIRECT_TIMEOUT_MS = 6000;
 const EXTENSION_TIMEOUT_MS = 15_000;
 
-/** Lyric hosts the extension was refused for: the panel offers to allow them. */
+/** Lyric hosts the transport was refused for: the panel offers to allow them. */
 export const ungrantedOrigins = new Set<string>();
 const listeners = new Set<() => void>();
 export function onUngrantedChange(listener: () => void): () => void {
@@ -46,9 +47,8 @@ export function onGranted(listener: () => void): () => void {
 }
 
 /**
- * Asks the extension which refused hosts it may reach now. The grant happens
- * on the extension's own page in another tab, so this runs when BitChord's
- * tab comes back.
+ * Asks the transport which refused hosts it may reach now. An allowlist can
+ * change with a redeploy, so this runs again when BitChord's tab comes back.
  */
 export async function recheckGrants(): Promise<void> {
   const bridge = getBridge();
@@ -105,7 +105,7 @@ export async function lyricsGet(url: string, { route = 'direct', headers, patien
     });
     return response.ok ? await response.text() : null;
   } catch (error) {
-    // A CORS refusal looks like a network error from here; the extension isn't bound by it.
+    // A CORS refusal looks like a network error from here; the relay isn't bound by it.
     if (error instanceof TypeError) return viaExtension(url, headers);
     return null;
   }

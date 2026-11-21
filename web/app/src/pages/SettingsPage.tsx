@@ -1,10 +1,8 @@
 import { ChevronRight, Users } from 'lucide-react';
 import { lazy, Suspense, useState, type ComponentType, type ReactNode } from 'react';
-import { MdOutlineExtension } from 'react-icons/md';
-import { SiApplemusic, SiDiscord, SiSpotify, SiYoutubemusic } from 'react-icons/si';
+import { SiApplemusic, SiSpotify, SiYoutubemusic } from 'react-icons/si';
 import { PageHeader } from '@/components/PageHeader';
 import { PrefetchLink } from '@/components/PrefetchLink';
-import { useDiscord } from '@/extension/useDiscord';
 import { useExtension } from '@/extension/useExtension';
 import { useYtAuth } from '@/extension/useYtAuth';
 import { useParty } from '@/party/useParty';
@@ -12,7 +10,7 @@ import { useHistorySettings } from '@/playback/historyReporting';
 import { Select } from '@/components/Select';
 import { AUTOMIX_BARS } from '@/playback/automix/choices';
 import { CROSSFADE_CHOICES, usePlayer } from '@/state/player';
-import { AppleMusicIntegration, AppleMusicToggles, CanvasToggle, DiscordIntegration, LyricSourcesAccess, SpotifyIntegration, Toggle } from './IntegrationSettings';
+import { AppleMusicIntegration, AppleMusicToggles, LyricSourcesAccess, SpotifyIntegration, Toggle } from './IntegrationSettings';
 import { settingsUi } from './settingsStyles';
 
 const LyricsSettings = lazy(() => import('@/shell/LyricsSettings').then((m) => ({ default: m.LyricsSettings })));
@@ -42,8 +40,13 @@ function LinkRow({ to, icon, title, value }: { to: string; icon?: ReactNode; tit
 
 function youtubeText(auth: ReturnType<typeof useYtAuth>): string {
   if (auth.state === 'checking') return 'Checking…';
-  if (auth.state === 'unavailable') return 'Needs the extension';
-  const { browserSignedIn, connected, active } = auth.auth;
+  // No yt.auth capability: the relay runs anonymous-only — no fallback account is configured.
+  if (auth.state === 'unavailable') return 'Not signed in';
+  const { browserSignedIn, connected, signedIn, active } = auth.auth;
+  // The relay's fallback identity (web/docs/private-deployment.md): playback
+  // is signed by the relay's throwaway account, not a session this browser
+  // holds — signedIn without browserSignedIn. Name whose account it is.
+  if (signedIn && active && !browserSignedIn) return `Listening as ${active.name} · relay account`;
   if (!browserSignedIn) return 'Not signed in';
   if (!connected) return 'Disconnected';
   return active ? active.name : 'Signed in';
@@ -56,7 +59,6 @@ function youtubeText(auth: ReturnType<typeof useYtAuth>): string {
 export default function SettingsPage() {
   const extension = useExtension();
   const yt = useYtAuth();
-  const discord = useDiscord();
   const party = useParty();
   const autoplay = usePlayer((s) => s.autoplay);
   const crossfadeSec = usePlayer((s) => s.crossfadeSec);
@@ -68,17 +70,9 @@ export default function SettingsPage() {
   const { setAutoplay, setCrossfade, setAutomix, setAutomixBars, setShowNerdStats } = usePlayer.getState();
   const [lyrics, setLyrics] = useState(false);
   const present = extension.state === 'present';
-  // The relay answering in the extension's place: AutoMix's Web Audio graph
-  // would be silent there, so the setting needs the extension (relay.md §5).
+  // The relay is the only transport, so this is just "did it answer". AutoMix's
+  // Web Audio graph would be silent over it, so the setting says so (relay.md §5).
   const relay = present && extension.extension.info.browser === 'server';
-  const discordText =
-    discord.state === 'ready' && discord.discord.connected
-      ? discord.discord.enabled
-        ? 'On'
-        : 'Off'
-      : discord.state === 'ready' && discord.discord.available
-        ? 'Not connected'
-        : null;
 
   return (
     <div className={settingsUi.centered}>
@@ -94,42 +88,30 @@ export default function SettingsPage() {
           <div className={settingsUi.integration}>
             <Glyph Icon={SiSpotify} color="#1ed760" />
             <span className={settingsUi.integrationName}>Spotify</span>
-            {/* The relay answers 'present' but can't hold a Spotify session, so
-              it's the extension's feature to ask for, not an old version's. */}
-            {present && !relay ? <SpotifyIntegration /> : <span className={settingsUi.value}>Needs the extension</span>}
+            {/* Signed in or not is between this browser and Spotify alone (PKCE);
+              the row says which, with no relay involvement either way. */}
+            <SpotifyIntegration />
           </div>
-          {present && discord.state === 'ready' && discord.discord.available && (
-            <LinkRow to="/settings/discord" icon={<Glyph Icon={SiDiscord} color="#5865f2" />} title="Discord" value={discordText} />
-          )}
-          <LinkRow
-            to="/extension"
-            icon={<Glyph Icon={MdOutlineExtension} color="#636366" />}
-            title="BitChord Extension"
-            value={present ? (relay ? 'Server relay connected' : `v${extension.extension.info.version}`) : 'Not installed'}
-          />
         </section>
         <section className={`${settingsUi.group} mt-3 empty:hidden`}>
           <Toggle
             label="Share Listening Activity to YouTube"
             detail={
               relay
-                ? 'Sharing needs the BitChord extension; the server relay plays anonymously.'
-                : present && !extension.extension.info.capabilities.includes('yt.stats')
-                  ? 'Update the BitChord extension to share: this version can’t send plays to YouTube.'
-                  : 'Songs you play here go to your YouTube Music history and shape its recommendations.'
+                ? 'The relay plays on its shared account and reports no play history.'
+                : 'Songs you play here go to your YouTube Music history and shape its recommendations.'
             }
             checked={shareHistory}
             onChange={setShareHistory}
           />
-          <CanvasToggle />
         </section>
 
         <h2 className={settingsUi.sectionHeader}>Apple Music</h2>
         <section className={settingsUi.group}>
           <div className={settingsUi.integration}>
             <Glyph Icon={SiApplemusic} color="#fa2d48" />
-            <span className={settingsUi.integrationName}>Extension Access</span>
-            {present ? <AppleMusicIntegration /> : <span className={settingsUi.value}>Needs the extension</span>}
+            <span className={settingsUi.integrationName}>Relay Access</span>
+            {present ? <AppleMusicIntegration /> : <span className={settingsUi.value}>Relay unreachable</span>}
           </div>
           <AppleMusicToggles />
         </section>
@@ -158,7 +140,7 @@ export default function SettingsPage() {
               <span>Crossfade</span>
               {relay && (
                 <span className={settingsUi.rowDetail}>
-                  AutoMix needs the BitChord extension; over the server relay only the timed volume crossfade plays.
+                  AutoMix can’t run over the server relay; only the timed volume crossfade plays.
                 </span>
               )}
             </span>
@@ -209,7 +191,7 @@ export default function SettingsPage() {
           </button>
           <div className={settingsUi.integrationPlain}>
             <span className={settingsUi.integrationName}>Lyric Sources Access</span>
-            {present ? <LyricSourcesAccess /> : <span className={settingsUi.value}>Needs the extension</span>}
+            {present ? <LyricSourcesAccess /> : <span className={settingsUi.value}>Relay unreachable</span>}
           </div>
         </section>
       </div>

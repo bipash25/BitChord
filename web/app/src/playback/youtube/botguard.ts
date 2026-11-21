@@ -4,11 +4,11 @@
 // BotGuard runs in the page because the user's real browser is where it
 // expects to run (prompt §5.1). Create is a plain fetch: www.youtube.com/api/jnn
 // allows cross-origin requests on its own. GenerateIT goes through the
-// extension so it carries YouTube's Origin: an integrity token minted for
+// server relay so it carries YouTube's Origin: an integrity token minted for
 // another origin is accepted by nothing (measured: every stream, SABR or
 // direct, was cut off at ~70s, googlevideo's limit for an unattested session).
-// Kira sends GenerateIT through its extension too; Android runs BotGuard in a
-// WebView on youtube.com.
+// Kira sends GenerateIT through its own extension too; Android runs BotGuard
+// in a WebView on youtube.com.
 
 import type { BotGuardClient } from 'bgutils-js/botguard';
 import type { IBotguardClientSideBgChallenge, WebPoSignalOutput } from 'bgutils-js/shared-types';
@@ -82,7 +82,7 @@ class BotguardService {
     const webPoSignalOutput: WebPoSignalOutput = [];
     const botguardResponse = await this.client.snapshot({ webPoSignalOutput });
     const bridge = getBridge();
-    if (!bridge) throw new Error('BotGuard needs the extension to request an integrity token');
+    if (!bridge) throw new Error('BotGuard needs the server relay to request an integrity token');
     const integrityResponse = await bridge.call('yt.fetch', {
       url: buildURL('GenerateIT', true),
       method: 'POST',

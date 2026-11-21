@@ -2,9 +2,10 @@ import { concatBytes, MAX_RESPONSE_BYTES } from './limits.js';
 import type { HttpResponse } from './contract.js';
 
 /**
- * How an upstream `Response` becomes an `HttpResponse`: ported verbatim from
- * `web/extension/lib/ytFetch.ts`, so the page sees the same encoding on both
- * transports — text bodies as `bodyEncoding: 'text'`, everything else base64.
+ * How an upstream `Response` becomes an `HttpResponse`: text bodies as
+ * `bodyEncoding: 'text'`, everything else base64 — the encoding the page's
+ * bridge client has always decoded (the contract learned it from the
+ * extension's `ytFetch`, which is gone; the relay is the only writer now).
  */
 
 /** An upstream response bigger than the relay is willing to buffer. */

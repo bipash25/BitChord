@@ -1,13 +1,16 @@
 # BitChord Web
 
-The web player and its companion browser extension. The plan, and the decisions behind it, are in [`docs/web-app-build-prompt.md`](../docs/web-app-build-prompt.md).
+The web player and the server relay that does its networking. The original
+plan is in [`docs/web-app-build-prompt.md`](../docs/web-app-build-prompt.md);
+why the extension that plan called for was replaced by the relay is in
+[`docs/relay.md`](docs/relay.md) (its "Phase 2" section records the removal).
 
 | Package | What it is |
 |---|---|
 | `app/` | The site: Vite, React 19, TypeScript, React Router, TanStack Query, Zustand, Tailwind CSS v4 |
-| `extension/` | Manifest V3 extension for Chromium and Firefox, built with WXT |
-| `shared/` | The page ↔ extension bridge contract and client, used by both |
-| `docs/` | `apple-music-dom.md` (the design measurements), `kira-notes.md` (how the reference YouTube web client plays), `youtube-playback.md`, `youtube-signin.md`, `queue-and-player.md`, `lyrics.md`, `spotify-and-discord.md` |
+| `relay/` | The server relay: Node, zero runtime dependencies, the site's one transport (its own [README](relay/README.md) has the details) |
+| `shared/` | The page ↔ relay bridge contract and client, used by both |
+| `docs/` | `apple-music-dom.md` (the design measurements), `kira-notes.md` (how the reference YouTube web client plays), `youtube-playback.md`, `youtube-signin.md`, `queue-and-player.md`, `lyrics.md`, `spotify-and-discord.md`, `relay.md` |
 | `fixtures/` | Real captured responses for parser tests (see its README) |
 | `scripts/` | `capture-fixtures.mjs` |
 
@@ -25,45 +28,74 @@ corepack pnpm --dir web install
 corepack pnpm --dir web/app dev
 ```
 
-It serves on `http://localhost:5173`, and only there (`strictPort`): the extension trusts that exact origin.
+It serves on `http://localhost:5173`, and only there (`strictPort`): the
+relay's default `RELAY_ALLOWED_ORIGINS` names that exact origin.
 
-## Run the extension
+## Run the relay
 
-Build both targets:
-
-```bash
-corepack pnpm --dir web/extension build
-```
-
-- **Chrome, Edge, Brave:** `chrome://extensions` → Developer mode → *Load unpacked* → `web/extension/.output/chrome-mv3`. The id is always `pkddffeebcmhhanjcigilehaeonkkfih`, pinned by the manifest `key` (`extension/dev-key/`), so the site finds it without configuration.
-- **Firefox:** `about:debugging#/runtime/this-firefox` → *Load Temporary Add-on* → `web/extension/.output/firefox-mv3/manifest.json`.
-
-To offer the extension as a download from the site's Extension page, package it:
+Every browser — mobile included — reaches YouTube through the relay, so a
+dev site needs one running:
 
 ```bash
-corepack pnpm --dir web/extension package
+corepack pnpm --dir web --filter @bitchord/relay dev    # tsc --watch + node --watch, port 8787
 ```
 
-This builds both targets and writes three files to `app/public/downloads/` (git-ignored):
+or built and run directly:
 
-- `bitchord-extension-chrome.zip` and `bitchord-extension-firefox.zip`. Each holds a single folder (`bitchord-extension-<browser>/`), so extracting it in place leaves one folder to load unpacked.
-- `extension.json`, with the version. The site compares it with the installed extension's version and shows **Update** in the sidebar and an update row on the Extension page when the zip is newer. Bump `version` in `extension/package.json` to publish an update.
+```bash
+corepack pnpm --dir web --filter @bitchord/relay build
+node web/relay/dist/index.js          # PORT=8787 RELAY_ALLOWED_ORIGINS=http://localhost:5173
+```
 
-`VITE_EXTENSION_CHROME_URL`, `VITE_EXTENSION_FIREFOX_URL` and `VITE_EXTENSION_MANIFEST_URL` override those links, for example to point at store listings.
+Then point the site at it: `VITE_RELAY_URL=http://localhost:8787` in
+`app/.env.local`. Without a relay nothing can play — there is no other
+transport.
 
-The toolbar icons (`extension/public/icon/`) are rendered from `app/public/favicon.svg` by `corepack pnpm --dir web/extension icons`.
-
-Then open `http://localhost:5173/extension`. It shows "Installed", with the version and the transport: **Direct** on Chromium (`externally_connectable`), **Page relay** on Firefox (content script).
+The relay is stateless (no cookies, no tokens, no user data) and fenced: an
+origin allowlist, a per-IP rate limit, and size/time caps. Environment
+(`PORT`, `RELAY_ALLOWED_ORIGINS`, `RELAY_TRUST_PROXY`), the abuse limits and
+the probe that verifies a deployment are in [`relay/README.md`](relay/README.md).
 
 ## Configuration
 
-| Variable | Where | Default |
-|---|---|---|
-| `BITCHORD_SITE_ORIGINS` | extension build | `https://bitchord.in,https://bitchord-8bw.pages.dev,http://localhost:5173` (store builds leave out localhost). Comma-separated origins the extension serves; replaces the default |
-| `BITCHORD_STORE_BUILD=1` | extension build | Leaves out the dev `key` for a Chrome Web Store upload |
-| `VITE_EXTENSION_ID_CHROMIUM` | app (`app/.env.local`) | The pinned dev id. Set it for a store-built extension |
-| `VITE_ANDROID_APP_URL` | app | The GitHub releases page |
-| `VITE_PARTY_SERVER_URL` | app (`app/.env.local`, Pages env) | None. The Listen Together server; `vite build` fails without it |
+| Variable | Where | Default | Meaning |
+|---|---|---|---|
+| `VITE_RELAY_URL` | app (`app/.env.local`, Pages env) | None. Empty = off, nothing can play | The relay's base URL, e.g. `https://bitchord.in/relay`. Production sets it in the Cloudflare Pages environment |
+| `VITE_PARTY_SERVER_URL` | app (`app/.env.local`, Pages env) | None. The Listen Together server; `vite build` fails without it | |
+| `VITE_ANDROID_APP_URL` | app | The GitHub releases page | Where the mobile banner points |
+| `VITE_SPOTIFY_CLIENT_ID` | app (`app/.env.local`, Pages env) | None. Empty = Spotify isn't configured; its surfaces show a quiet "not configured" state | The Spotify app's client id for the page's PKCE sign-in (see "Spotify" below) |
+
+## Spotify
+
+Spotify is reached directly by the page — the official Web API with an
+Authorization Code + PKCE flow, so no client secret exists anywhere and the
+relay is not involved (`web/docs/relay.md`, phase 2). Setting it up, once:
+
+1. Register an app in the [Spotify developer
+   dashboard](https://developer.spotify.com/dashboard) (a "Web API" app).
+   No client secret is used or needed; the flow never has one.
+2. In the app's settings, add its **redirect URIs** — exactly, as Spotify
+   matches them letter for letter:
+   - the site's: `https://your-domain/spotify`
+   - localhost, for development: `http://localhost:5173/spotify`
+3. Copy the **client id** into `VITE_SPOTIFY_CLIENT_ID`
+   (`app/.env.local`, or the Cloudflare Pages environment in production).
+
+While the app is in Spotify's development mode, only the account that owns it
+(and up to 25 users manually added in the dashboard's *User Management*) can
+sign in — fine for a private deployment, and the thing to know before
+wondering why a friend's sign-in is refused. Serving the public site means
+requesting extended quota mode from Spotify.
+
+The scopes asked for are read-only (`user-read-private`,
+`playlist-read-private`, `playlist-read-collaborative`, `user-library-read`).
+The tokens live in the user's browser only. "Disconnect" discards them there;
+Spotify publishes no token-revocation endpoint, so a user who wants the grant
+itself removed can do that at
+[spotify.com/account/apps](https://www.spotify.com/account/apps).
+
+Canvas, Spotify's looping clip, is gone with the extension: it came from the
+unofficial Pathfinder API and needed `sp_dc`, which nothing holds any more.
 
 ## Deploy (Cloudflare Pages)
 
@@ -72,13 +104,20 @@ Then open `http://localhost:5173/extension`. It shows "Installed", with the vers
 | Root directory | `web` |
 | Build command | `pnpm build:site` |
 | Output directory | `app/dist` |
-| Environment | `NODE_VERSION=22`, `VITE_PARTY_SERVER_URL` |
+| Environment | `NODE_VERSION=22`, `VITE_PARTY_SERVER_URL`, `VITE_RELAY_URL`, `VITE_SPOTIFY_CLIENT_ID` (optional — see "Spotify") |
 
-`build:site` packages the extension first, so each deploy publishes the zips and `downloads/extension.json` with the version from `web/extension/package.json`. The Extension page polls that file and offers the update when it's newer than the installed one. Bump that version to make an update show.
+`build:site` builds only the app. The relay is deployed separately — it is a
+Node service, not a static asset. Nicer than a second domain: reverse-proxy
+it under the site's origin (`/relay/` → relay, prefix stripped, so the page's
+`VITE_RELAY_URL` is `https://bitchord.in/relay` and there is no CORS at all).
+The Caddy stanza, a systemd unit and the egress considerations (measure with
+the probe before believing a deployment works) are in
+[`relay/README.md`](relay/README.md).
 
 ## Checks
 
 ```bash
 corepack pnpm --dir web -r typecheck
+corepack pnpm --dir web -r test
 corepack pnpm --dir web/app build
 ```

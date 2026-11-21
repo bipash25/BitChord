@@ -1,6 +1,6 @@
 /*
  * Grouped inset rows, the settings idiom the app uses elsewhere: the
- * Extension, Settings, Discord and Listen Together pages.
+ * Settings and Listen Together pages.
  */
 
 const row = 'relative flex items-center justify-between px-4 py-[11px] type-title-3 hairline-[16px]';
@@ -21,17 +21,6 @@ export const settingsUi = {
   rowText: 'flex flex-col gap-0.5',
   rowDetail: 'type-callout text-secondary',
   value: 'inline-flex items-center gap-1.5 text-right type-body-reduced text-secondary',
-  dot: 'size-2 rounded-full bg-green',
-
-  /** Download rows: browser logo, title and detail, chevron. */
-  download:
-    'relative grid grid-cols-[28px_minmax(0,1fr)_auto] items-center gap-x-4 px-4 py-[11px] hover:bg-quinary hairline-[60px]',
-  updateDot: 'size-2.5 justify-self-center rounded-full bg-key',
-  downloadText: 'flex min-w-0 flex-col gap-0.5',
-  downloadTitle: 'type-title-3-emphasized text-key',
-  downloadDetail: 'type-body text-secondary',
-  chevron: 'text-tertiary',
-  steps: 'mx-4 mt-2.5 list-decimal ps-[18px] type-body-tall text-secondary [&>li+li]:mt-1',
 
   /** Integration rows: a coloured app-icon square, the name, the state. */
   integration: `${integration} grid-cols-[24px_minmax(0,1fr)_auto]`,
@@ -43,7 +32,6 @@ export const settingsUi = {
   linkRow: 'w-full cursor-pointer text-start hover:bg-quaternary',
   /** A row's own action, after its status (Connect, Disconnect). */
   inlineButton: 'ml-2 rounded-[12px] bg-quaternary px-2.5 py-[3px] type-callout-emphasized text-primary disabled:opacity-50',
-  inlineLink: 'text-key',
 
   switch: [
     'relative h-[22px] w-[38px] flex-none cursor-pointer appearance-none rounded-[11px] bg-quaternary transition-[background-color] duration-200 checked:bg-green',

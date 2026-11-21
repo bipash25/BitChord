@@ -1,13 +1,13 @@
 /**
- * The page ↔ relay contract: the same envelope the extension speaks, copied
- * by hand from `web/shared/src/bridge/protocol.ts`.
+ * The page ↔ relay contract: the same envelope the page speaks, copied by
+ * hand from `web/shared/src/bridge/protocol.ts`.
  *
  * Why a copy: the relay has zero dependencies (relay.md) — `node:http` plus
  * the global fetch — and `@bitchord/shared` ships unbundled TypeScript aimed
- * at bundlers (vite, wxt), which a standalone Node service built with `tsc`
+ * at bundlers (vite), which a standalone Node service built with `tsc`
  * cannot import. The copy is kept to the subset the relay answers; a drift
  * between the two files fails loudly, because `ping` answers with this
- * `BRIDGE_PROTOCOL` and the page's transports refuse a number they don't
+ * `BRIDGE_PROTOCOL` and the page's transport refuses a number it doesn't
  * speak before any method runs.
  */
 
@@ -17,8 +17,8 @@ export const BRIDGE_PROTOCOL = 1;
 /** Tags every message so the relay ignores everything else on the wire. */
 export const BRIDGE_CHANNEL = 'bitchord-bridge';
 
-/** What a transport can do; `ping` reports the relay's subset. */
-export type Capability = 'yt' | 'yt.auth' | 'yt.stats' | 'addon' | 'lyrics' | 'spotify' | 'discord';
+/** What a transport can do; `ping` reports the relay's subset. Spotify left the bridge with the extension (relay.md phase 2). */
+export type Capability = 'yt' | 'yt.auth' | 'yt.stats' | 'addon' | 'lyrics';
 
 /** The relay is the one transport that is not a browser at all. */
 export type BrowserFamily = 'chromium' | 'firefox' | 'server';
@@ -77,29 +77,10 @@ export interface YtAuthState {
   problem: string | null;
 }
 
-/** The browser's open.spotify.com session, as BitChord may use it. The relay always answers the signed-out shape. */
-export interface SpotifyAuthState {
-  browserSignedIn: boolean;
-  connected: boolean;
-  signedIn: boolean;
-  user: { name: string; avatarUrl: string | null } | null;
-  problem: string | null;
-}
-
-/** Discord rich presence, when the build includes it. The relay always answers unavailable. */
-export interface DiscordState {
-  available: boolean;
-  connected: boolean;
-  enabled: boolean;
-  user: { name: string; username: string; avatarUrl: string | null } | null;
-  gateway: 'off' | 'connecting' | 'ready' | 'error';
-  problem: string | null;
-}
-
 /**
  * A request as it arrives on the wire. `params` is left `unknown` on purpose:
- * unlike the extension, whose page is a typed partner, the relay answers
- * anyone who posts to `/bridge`, so every method validates what it reads.
+ * the page is a typed partner, but the relay answers anyone who posts to
+ * `/bridge`, so every method validates what it reads.
  */
 export interface BridgeRequest {
   channel: typeof BRIDGE_CHANNEL;

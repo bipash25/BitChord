@@ -1,56 +1,45 @@
 import { PageHeader } from '@/components/PageHeader';
 import { SquareLockup } from '@/components/music/Lockups';
-import { EmptyState, LoadError, NeedsExtension, stateStyles } from '@/components/music/States';
+import { EmptyState, LoadError, stateStyles } from '@/components/music/States';
 import type { MusicItem } from '@/data/music/types';
+import { openSpotifySignIn, useRefreshSpotifyAuth, useSpotifyAuth } from '@/data/spotify/auth';
 import { useSpotifyPlaylists } from '@/data/spotify/queries';
-import { useExtension } from '@/extension/useExtension';
-import { openSpotifySignIn, useRefreshSpotifyAuth, useSetSpotifyConnected, useSpotifyAuth } from '@/extension/useSpotifyAuth';
 import { PlainSkeleton } from '@/skeletons/PageSkeletons';
 import { seeAllGrid } from './pageStyles';
 
 /**
  * The signed-in Spotify account's playlists (SpotifyLibraryScreen): this page
  * is only the way in; a playlist opens as an ordinary playlist page whose
- * songs are matched to YouTube Music.
+ * songs are matched to YouTube Music. Spotify is reached directly by the page
+ * (PKCE, relay.md phase 2), so none of this waits on the relay — only the
+ * matching inside a playlist does.
  */
 export default function SpotifyPage() {
-  const extension = useExtension();
   const auth = useSpotifyAuth();
   const playlists = useSpotifyPlaylists();
-  const connect = useSetSpotifyConnected();
   const retry = useRefreshSpotifyAuth();
 
-  if (extension.state === 'missing') return <NeedsExtension what="your Spotify playlists" />;
   if (auth.state === 'checking') return <PlainSkeleton />;
-  if (auth.state === 'unavailable') {
+  if (auth.state === 'unconfigured') {
     return (
       <>
         <PageHeader title="Spotify" />
-        <EmptyState title="Update the extension" detail="This version of the BitChord extension doesn’t include Spotify yet." />
+        <EmptyState title="Spotify isn’t configured on this deployment" />
       </>
     );
   }
   const state = auth.auth;
   if (!state.signedIn) {
-    const [title, detail, action] = !state.browserSignedIn
-      ? ['Sign in to Spotify', 'BitChord uses the Spotify account this browser is signed in to, through the extension.', 'Sign In']
-      : !state.connected
-        ? ['Spotify is disconnected', 'You’re signed in to Spotify in this browser. Connect to see your playlists here.', 'Connect']
-        : ['Couldn’t read your Spotify account', state.problem ?? 'Spotify didn’t answer.', 'Try Again'];
+    // A refused or half-finished handshake says so; otherwise this is the invitation.
+    const detail = state.problem ?? 'Sign in to see your Spotify playlists, each matched to its YouTube Music song.';
     return (
       <>
         <PageHeader title="Spotify" />
         <div className={stateStyles.state}>
-          <p className={stateStyles.title}>{title}</p>
+          <p className={stateStyles.title}>Sign in to Spotify</p>
           <p className={stateStyles.detail}>{detail}</p>
-          <button
-            className={stateStyles.button}
-            disabled={connect.isPending || retry.isPending}
-            onClick={() =>
-              !state.browserSignedIn ? openSpotifySignIn() : !state.connected ? connect.mutate(true) : retry.mutate()
-            }
-          >
-            {action}
+          <button className={stateStyles.button} disabled={retry.isPending} onClick={() => (state.problem ? retry.mutate() : openSpotifySignIn())}>
+            {state.problem ? 'Try Again' : 'Sign In'}
           </button>
         </div>
       </>

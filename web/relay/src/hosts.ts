@@ -1,7 +1,8 @@
 /**
  * The relay's fences and its impersonation table — `web/docs/relay.md`'s
- * "What it does do" section, which is the extension's `declarativeNetRequest`
- * rules (`web/extension/lib/rules.ts`) performed server-side.
+ * "What it does do" section: the header surgery the extension's
+ * `declarativeNetRequest` rules used to perform, done server-side since the
+ * extension went away.
  *
  * Every method is limited to an allowlist of hosts; the relay is never a
  * general proxy. All header names it builds are lowercase, which is how both
@@ -24,8 +25,9 @@ export const CHROMIUM_USER_AGENT =
 interface YtRule {
   pattern: RegExp;
   /**
-   * The origin to impersonate, or null for a plain fetch: rules 3–5 of
-   * rules.ts only added CORS headers, which the relay adds naturally.
+   * The origin to impersonate, or null for a plain fetch: the
+   * session-bootstrap URLs only ever needed CORS, which the relay adds
+   * naturally.
    */
   origin: string | null;
   /** X-Origin rides along on the youtubei rows only, as the table says. */
@@ -33,14 +35,13 @@ interface YtRule {
 }
 
 const YT_RULES: readonly YtRule[] = [
-  // InnerTube, as the YouTube Music and YouTube web clients (rules 1–2).
+  // InnerTube, dressed as the YouTube Music and YouTube web clients.
   { pattern: /^https:\/\/music\.youtube\.com\/youtubei\//, origin: 'https://music.youtube.com', xOrigin: true },
   { pattern: /^https:\/\/www\.youtube\.com\/youtubei\//, origin: 'https://www.youtube.com', xOrigin: true },
-  // What YouTube.js reads to build a session and decipher stream URLs (rules 3–5): plain fetches.
+  // What YouTube.js reads to build a session and decipher stream URLs: plain fetches.
   { pattern: /^https:\/\/www\.youtube\.com\/(sw\.js_data|iframe_api)(\?|$)/, origin: null },
   { pattern: /^https:\/\/www\.youtube\.com\/s\/player\//, origin: null },
-  // BotGuard GenerateIT must come from YouTube's origin, Origin and Referer
-  // only — the extension's own fetch rule (rules.ts) sets exactly those two.
+  // BotGuard GenerateIT must come from YouTube's origin, Origin and Referer only.
   { pattern: /^https:\/\/www\.youtube\.com\/api\/jnn\//, origin: 'https://www.youtube.com' },
 ];
 
@@ -61,11 +62,27 @@ export function ytImpersonationFor(url: URL): Record<string, string> | null {
 }
 
 /**
- * Lyric providers the page can't reach itself: a copy of
- * `web/extension/lib/lyricHosts.ts`'s LYRIC_ORIGINS, kept in sync by hand.
- * The relay performs none of the extension's per-host header surgery (the
- * Musixmatch capability cookie, Apple's Origin) — the design rule is that no
- * credential, and no cookie of any kind, is ever added to an upstream request.
+ * Whether [url] is an InnerTube API call on one of the two web origins —
+ * browse, search, player and their siblings. This is the family a fallback
+ * credential signs (`web/docs/private-deployment.md`); the session bootstrap
+ * and BotGuard rows stay anonymous, exactly as the table dresses them.
+ */
+export function isInnerTubeUrl(url: URL): boolean {
+  return (
+    (url.hostname === 'music.youtube.com' || url.hostname === 'www.youtube.com') &&
+    url.pathname.startsWith('/youtubei/')
+  );
+}
+
+/**
+ * Lyric providers the page can't reach itself. The list is the relay's own
+ * now that the extension (whose `lyricHosts.ts` it was copied from) is gone;
+ * the app learns which of the hosts it routes through the bridge are served
+ * by asking `lyrics.permissions`. The relay performs no per-host header
+ * surgery (the Musixmatch capability cookie, Apple's Origin) — the design
+ * rule is that no credential, and no cookie of any kind, is ever added to a
+ * lyric or addon request. The one cookie the relay ever attaches is the
+ * fallback's, on InnerTube hosts only (`fallback.ts`).
  */
 export const LYRIC_ORIGINS = [
   'https://lrc.red',
@@ -102,33 +119,48 @@ export function isAddonUrl(url: URL): boolean {
 
 /**
  * Header names the relay never forwards from the page's params:
- * - `cookie` and `authorization`: identity. The relay holds none, and no
- *   request it makes may carry one the page smuggled in.
+ * - `cookie`: identity. A page never gets to choose the session a request
+ *   rides on — the fallback credential is the relay's to attach and nothing
+ *   else's (private-deployment.md's hygiene).
  * - `user-agent`: always the relay's pinned Chromium, mirroring what a
  *   browser's fetch does to a page that tries to set its own.
  * - `host`, `content-length`: forbidden header names a browser fetch silently
  *   drops; undici would either override or trip over them.
+ *
+ * `authorization` is handled apart from this list — see `sanitiseHeaders`.
  */
-const DROPPED_HEADERS = new Set(['cookie', 'authorization', 'user-agent', 'host', 'content-length']);
+const DROPPED_HEADERS = new Set(['cookie', 'user-agent', 'host', 'content-length']);
 
 /** A header name as the HTTP grammar allows it; anything else is not forwarded. */
 const HEADER_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
 /**
  * The page's headers, sanitised: identity and fetch-managed headers dropped,
- * `x-goog-*` dropped (YouTube identity the relay speaks without), and
- * anything a browser fetch would refuse — malformed names, newlines in
- * values, non-string values from an untrusted body — dropped rather than
- * thrown at, so one bad header can't take a whole call down.
+ * `x-goog-*` dropped (YouTube identity the relay speaks without, or adds
+ * itself when a fallback is configured), and anything a browser fetch would
+ * refuse — malformed names, newlines in values, non-string values from an
+ * untrusted body — dropped rather than thrown at, so one bad header can't
+ * take a whole call down.
+ *
+ * `authorization` is dropped like the rest of the identity headers unless
+ * [options.forwardAuthorization] is set (yt.fetch sets it): a page-held
+ * credential is the caller's own per-call choice and travels untouched. One
+ * exception stands in both settings: a `SAPISIDHASH` value is never the
+ * page's to speak — that scheme is the relay's to build over its own jar, so
+ * a page-supplied one is dropped like a cookie would be.
  */
-export function sanitiseHeaders(headers: Record<string, string>): Record<string, string> {
+export function sanitiseHeaders(
+  headers: Record<string, string>,
+  options: { forwardAuthorization?: boolean } = {},
+): Record<string, string> {
   const outgoing: Record<string, string> = {};
   for (const [name, value] of Object.entries(headers)) {
     const lower = name.toLowerCase();
-    if (DROPPED_HEADERS.has(lower) || lower.startsWith('x-goog-')) continue;
     // JSON can carry an own "__proto__" key; assigning that name would set the prototype instead of a header.
     if (lower === '__proto__') continue;
     if (typeof value !== 'string' || value.includes('\r') || value.includes('\n')) continue;
+    if (lower === 'authorization' && (!options.forwardAuthorization || value.startsWith('SAPISIDHASH '))) continue;
+    if (DROPPED_HEADERS.has(lower) || lower.startsWith('x-goog-')) continue;
     if (!HEADER_NAME.test(name)) continue;
     outgoing[lower] = value;
   }

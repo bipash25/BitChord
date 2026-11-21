@@ -27,8 +27,9 @@ export const useHistorySettings = create<{ share: boolean; setShare: (on: boolea
  *
  * The URLs come from a signed-in WEB_REMIX /player call, which only includes
  * them when it quotes the current player's signatureTimestamp. The calls and
- * the pings go through the extension, which signs them as the account; the
- * page never sees the cookies. Best effort: nothing here touches playback.
+ * the pings travel through the transport, which signs them as the account;
+ * the page never sees the credentials. Best effort: nothing here touches
+ * playback.
  */
 
 const REPORT_INTERVAL_SEC = 30;
@@ -127,7 +128,7 @@ async function statsUrl(base: string, cpn: string, extra: Record<string, string>
 
 async function ping(url: string): Promise<number> {
   const bridge = getBridge();
-  if (!bridge) throw new Error('no extension');
+  if (!bridge) throw new Error('no relay');
   const yt = await getSignedInnertube();
   const visitor = yt.session.context.client.visitorData;
   const response = await bridge.call('yt.fetch', {

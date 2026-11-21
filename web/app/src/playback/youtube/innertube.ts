@@ -6,20 +6,17 @@ import { trackLog } from '../trackLog';
 
 /**
  * The page's YouTube.js instance, created on first use (YouTube.js is large,
- * prompt §3). All of its requests leave from the browser itself; the YouTube
- * headers come from whichever transport answered detection — the extension's
- * declarativeNetRequest rules (web/extension/lib/rules.ts) on the direct
- * path, the server relay's impersonation over `yt.fetch` on the relay's
- * (relay.md §3).
+ * prompt §3). Its requests leave from the browser itself; the YouTube headers
+ * come from the server relay's impersonation over `yt.fetch` (relay.md §3).
  */
 let instance: Promise<Innertube> | null = null;
 
 export function getInnertube(): Promise<Innertube> {
   instance ??= getBridgeWhenSettled()
-    // The session's bootstrap (sw.js_data, the player script) races the
-    // extension detection on load — the home feed starts both at once — so
-    // wait for the first answer before building it. Per-request, sessionFetch
-    // re-reads the bridge: the transport may have been known only meanwhile.
+    // The session's bootstrap (sw.js_data, the player script) races relay
+    // detection on load — the home feed starts both at once — so wait for
+    // the first answer before building it. Per-request, sessionFetch re-reads
+    // the bridge: the relay may have answered only meanwhile.
     .then(() => create())
     .catch((error: unknown) => {
       instance = null;
@@ -30,7 +27,7 @@ export function getInnertube(): Promise<Innertube> {
 
 /**
  * A second instance for signed-in requests (prompt §5.3). Its InnerTube calls
- * go through the extension (`yt.fetch` with `auth`), which adds the user's
+ * go through the relay (`yt.fetch` with `auth`), which adds the user's
  * session; everything else (the session bootstrap, the player script) loads
  * like the anonymous instance's. The page never holds a cookie, so YouTube.js
  * is told it is signed in rather than given one.
@@ -73,7 +70,7 @@ const SAFELISTED = new Set(['accept', 'accept-language', 'content-language']);
  * custom headers. youtubei parses the JSON body regardless of the declared
  * type, and everything the dropped headers carried (client name and version,
  * visitor data) is also in the body's `context.client`. Origin, Referer and
- * X-Origin are added by the extension's rule.
+ * X-Origin are added by the transport that performs the request.
  */
 async function simpleRequestFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const request = input instanceof Request ? input : null;
@@ -170,14 +167,14 @@ async function sessionFetch(input: RequestInfo | URL, init?: RequestInit): Promi
   return simpleRequestFetch(input, init);
 }
 
-/** InnerTube calls through the extension, signed as the chosen channel; the rest as simpleRequestFetch. */
+/** InnerTube calls through the relay, signed as the chosen channel; the rest as simpleRequestFetch. */
 async function signedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const request = input instanceof Request ? input : null;
   const url = new URL(request ? request.url : input.toString());
   if (!isInnertubeCall(url)) return simpleRequestFetch(input, init);
 
   const bridge = getBridge();
-  if (!bridge) throw new Error('Signed-in requests need the BitChord extension');
+  if (!bridge) throw new Error('Signed-in requests need the server relay, which didn’t answer');
   const method = (init?.method ?? request?.method ?? 'GET').toUpperCase() as 'GET' | 'POST';
   const headers: Record<string, string> = {};
   new Headers(init?.headers ?? request?.headers).forEach((value, key) => (headers[key] = value));

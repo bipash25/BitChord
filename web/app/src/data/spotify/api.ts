@@ -1,48 +1,141 @@
-import type { SpotifyPlaylist, SpotifyTrack } from '@bitchord/shared/bridge';
 import { best, type MatchCandidate } from '@/data/match/trackMatcher';
 import { searchSongs } from '@/data/music/api';
 import type { Track } from '@/data/music/types';
-import { getBridge } from '@/extension/bridge';
+import { spotifyGet } from './auth';
 
 /**
- * Spotify through the extension (prompt §7.1): the library, a playlist's
- * tracks, and matching each one to its YouTube Music song. Ports
- * SpotifyLibrary.kt's paging and SpotifyImporter.matchTrack.
+ * Spotify data through the official Web API (relay.md phase 2): the library's
+ * playlists, a playlist's tracks and Liked Songs, mapped onto the shapes the
+ * pages already read. Ports SpotifyLibrary.kt's paging and
+ * SpotifyImporter.matchTrack; the matching to YouTube Music below is the part
+ * the relay still carries (the search itself), as it always did.
  */
 
-export const LIKED_ID = 'liked';
-
-function bridge() {
-  const b = getBridge();
-  if (!b) throw new Error('The BitChord extension is not installed');
-  return b;
+/** A playlist in the Spotify library; `id` is `liked` for the Liked Songs entry, which the API has no playlist for. */
+export interface SpotifyPlaylist {
+  id: string;
+  name: string;
+  owner: string | null;
+  imageUrl: string | null;
 }
+
+export interface SpotifyTrack {
+  /** The Spotify track id (base-62). */
+  id: string;
+  title: string;
+  /** Credited artists, comma-separated. */
+  artist: string;
+  album: string | null;
+  durationMs: number;
+  imageUrl: string | null;
+}
+
+/** Liked Songs has no playlist id in the Web API; this stands in everywhere (SpotifyLibrary.LIKED_ID). */
+export const LIKED_ID = 'liked';
+/** Spotify's own artwork for the Liked Songs entry, which the API doesn't carry. */
+const LIKED_COVER = 'https://misc.scdn.co/liked-songs/liked-songs-640.png';
+
+const obj = (v: unknown): Json | null => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Json) : null);
+const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+
+type Json = Record<string, unknown>;
+
+/** The widest image (SpotifyLibrary.largestSource): covers come 640 and smaller, in no fixed order. */
+function imageOf(sources: unknown): string | null {
+  let widest: { url: string; width: number } | null = null;
+  for (const source of arr(sources)) {
+    const url = str(obj(source)?.url);
+    const width = num(obj(source)?.width);
+    if (url && (!widest || width > widest.width)) widest = { url, width };
+  }
+  return widest?.url ?? null;
+}
+
+/** A saved-playlist row; rows without an id or a name (folders, removed playlists) are skipped. */
+function playlistOf(item: unknown): SpotifyPlaylist[] {
+  const data = obj(item);
+  const id = str(data?.id);
+  const name = str(data?.name);
+  if (!id || !name.trim()) return [];
+  return [{ id, name, owner: str(obj(data?.owner)?.display_name) || null, imageUrl: imageOf(data?.images) }];
+}
+
+/** A saved-track row: episodes and removed/local entries (a null `track`) are skipped. */
+function trackOf(item: unknown): SpotifyTrack[] {
+  const track = obj(obj(item)?.track);
+  const id = str(track?.id);
+  const title = str(track?.name);
+  if (!track || !id || !title.trim()) return [];
+  const album = obj(track.album);
+  return [
+    {
+      id,
+      title,
+      artist: arr(track.artists)
+        .map((a) => str(obj(a)?.name))
+        .filter((name) => !!name.trim())
+        .join(', '),
+      album: str(album?.name) || null,
+      durationMs: num(track.duration_ms),
+      imageUrl: imageOf(album?.images),
+    },
+  ];
+}
+
+/** A page is the last one when Spotify says so: `next` is null after the final page, and an empty page is the safety stop. */
+const lastPage = (page: Json, raw: unknown[]): boolean => !raw.length || page.next === null;
 
 /** Every playlist in the library, Liked Songs first, however many pages it takes. */
 export async function fetchSpotifyPlaylists(): Promise<SpotifyPlaylist[]> {
-  const out: SpotifyPlaylist[] = [];
+  // Liked Songs is not a playlist to the Web API; it always leads (SpotifyLibrary's order).
+  const out: SpotifyPlaylist[] = [{ id: LIKED_ID, name: 'Liked Songs', owner: null, imageUrl: LIKED_COVER }];
   for (let offset = 0; ; ) {
-    const page = await bridge().call('spotify.playlists', { offset }, { timeoutMs: 30_000 });
-    out.push(...page.items);
-    offset += page.raw;
-    if (page.raw === 0 || offset >= page.total) break;
+    const page = await spotifyGet('/me/playlists', { limit: 50, offset });
+    const raw = arr(page.items);
+    out.push(...raw.flatMap(playlistOf));
+    offset += raw.length;
+    if (lastPage(page, raw)) break;
   }
   return out;
 }
 
-export function fetchSpotifyPlaylistInfo(playlistId: string) {
-  return bridge().call('spotify.playlist', { playlistId }, { timeoutMs: 30_000 });
+/** A playlist's name and cover at full size; Liked Songs answers from its own count. */
+export async function fetchSpotifyPlaylistInfo(playlistId: string): Promise<{
+  name: string;
+  owner: string | null;
+  imageUrl: string | null;
+  total: number;
+}> {
+  if (playlistId === LIKED_ID) {
+    const page = await spotifyGet('/me/tracks', { limit: 1, fields: 'total' });
+    return { name: 'Liked Songs', owner: null, imageUrl: LIKED_COVER, total: num(page.total) };
+  }
+  // fields= trims off the whole first page of tracks the endpoint would otherwise return.
+  const page = await spotifyGet(`/playlists/${encodeURIComponent(playlistId)}`, {
+    fields: 'name,owner(display_name),images(url,width),tracks(total)',
+  });
+  return {
+    name: str(page.name) || 'Playlist',
+    owner: str(obj(page.owner)?.display_name) || null,
+    imageUrl: imageOf(page.images),
+    total: num(obj(page.tracks)?.total),
+  };
 }
 
 /** Every track of a playlist; [onPage] gets the running list after each page, so a long one fills in. */
 export async function fetchSpotifyTracks(playlistId: string, onPage: (soFar: SpotifyTrack[], total: number) => void): Promise<SpotifyTrack[]> {
   const out: SpotifyTrack[] = [];
+  const path = playlistId === LIKED_ID ? '/me/tracks' : `/playlists/${encodeURIComponent(playlistId)}/tracks`;
   for (let offset = 0; ; ) {
-    const page = await bridge().call('spotify.tracks', { playlistId, offset }, { timeoutMs: 30_000 });
-    out.push(...page.items);
-    offset += page.raw;
-    onPage([...out], page.total);
-    if (page.raw === 0 || offset >= page.total) break;
+    const page = await spotifyGet(path, { limit: 100, offset });
+    const raw = arr(page.items);
+    out.push(...raw.flatMap(trackOf));
+    // The offset counts every row, including the ones filtered out above.
+    offset += raw.length;
+    onPage([...out], num(page.total) || out.length);
+    if (lastPage(page, raw)) break;
   }
   return out;
 }
@@ -76,9 +169,9 @@ export function candidateOf(track: Track): MatchCandidate {
 const matched = new Map<string, Track | null>();
 
 /**
- * The YouTube Music song that is [track], or null if there is none:
- * the best candidate by title, artist, length and album, and failing that
- * the search's first hit (SpotifyImporter.matchTrack).
+ * The YouTube Music song that is [track], or null if there is none: the best
+ * candidate by title, artist, length and album, and failing that the search's
+ * first hit (SpotifyImporter.matchTrack).
  */
 export async function matchToYouTube(track: SpotifyTrack): Promise<Track | null> {
   if (matched.has(track.id)) return matched.get(track.id)!;
@@ -95,32 +188,4 @@ export async function matchToYouTube(track: SpotifyTrack): Promise<Track | null>
   const result = found && { ...found, thumbnail: found.thumbnail ?? track.imageUrl };
   matched.set(track.id, result);
   return result;
-}
-
-// ---- Canvas (SpotifyCanvas / DesktopSpotifyCanvas) ---------------------------------
-
-const canvases = new Map<string, string | null>();
-
-/**
- * The looping clip Spotify shows behind [track], or null. The Spotify
- * counterpart is found with the same matcher, so a cover or a remix never
- * lends its canvas to the original.
- */
-export async function fetchCanvas(track: { videoId: string; title: string; artist: string; durationSec: number }): Promise<string | null> {
-  if (canvases.has(track.videoId)) return canvases.get(track.videoId)!;
-  const hits = await bridge().call('spotify.searchTracks', { query: `${track.title} ${track.artist}` }, { timeoutMs: 20_000 });
-  const pick = best(
-    hits.map((h) => ({
-      title: h.title,
-      artist: h.artist,
-      durationSec: h.durationMs > 0 ? Math.round(h.durationMs / 1000) : null,
-      album: h.album,
-      id: h.id,
-    })),
-    { title: track.title, artist: track.artist, durationSec: track.durationSec > 0 ? Math.round(track.durationSec) : null },
-  );
-  const url = pick ? (await bridge().call('spotify.canvas', { trackId: pick.id }, { timeoutMs: 20_000 })).url : null;
-  canvases.set(track.videoId, url);
-  if (canvases.size > 200) canvases.delete(canvases.keys().next().value!);
-  return url;
 }

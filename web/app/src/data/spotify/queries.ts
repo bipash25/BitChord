@@ -1,9 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { useSyncExternalStore } from 'react';
-import type { SpotifyTrack } from '@bitchord/shared/bridge';
 import type { Track } from '@/data/music/types';
-import { useSpotifyAuth, useSpotifySignedIn } from '@/extension/useSpotifyAuth';
-import { fetchSpotifyPlaylistInfo, fetchSpotifyPlaylists, fetchSpotifyTracks, matchToYouTube, pendingTrack } from './api';
+import { useSpotifyAuth, useSpotifySignedIn } from './auth';
+import { fetchSpotifyPlaylistInfo, fetchSpotifyPlaylists, fetchSpotifyTracks, matchToYouTube, pendingTrack, type SpotifyTrack } from './api';
 
 export function useSpotifyPlaylists() {
   const signedIn = useSpotifySignedIn();

@@ -183,8 +183,8 @@ export class YouTubeEngine {
 
       const skip = new Set<PlayerClientName>();
       let lastError: unknown = null;
-      // Every client answered, but only with SABR URLs, which the relay can't
-      // play: the final message must say what would (the extension).
+      // Every client answered, but only with SABR URLs, which the relay's
+      // progressive path can't play: the final message must say so plainly.
       let sabrOnly = false;
       let yt = this.yt;
       let signed = false;
@@ -194,7 +194,7 @@ export class YouTubeEngine {
           resolved = await timed('player request', videoId, () => resolvePlayer(yt, videoId, skip, signed));
         } catch (error) {
           // An age gate is a verdict on the visitor, not the track: ask again
-          // as the signed-in user, through the extension (prompt §5.3).
+          // as the signed-in user (prompt §5.3).
           if (!(error instanceof UnplayableError && error.ageGated) || signed || !ytAuthSnapshot().signedIn) throw error;
           trackLog.i('age-restricted; asking again signed in', videoId);
           yt = await timed('signed-in InnerTube session', videoId, getSignedInnertube);
@@ -205,8 +205,9 @@ export class YouTubeEngine {
         }
         this.checkCurrent(generation);
         if (relay && !hasDirectAudio(resolved.info)) {
-          // A SABR-only response (the web clients): it plays through Shaka and
-          // the extension's googlevideo rules, neither of which the relay has.
+          // A SABR-only response (the web clients): it plays through Shaka's
+          // MSE pipeline with CORS-clean googlevideo, neither of which the
+          // relay's progressive path has.
           sabrOnly = true;
           skip.add(resolved.client);
           excludeClient(videoId, resolved.client, 'SABR only: the relay plays direct URLs', resolved.signed);
@@ -229,7 +230,7 @@ export class YouTubeEngine {
         }
       }
       if (relay && sabrOnly) {
-        throw new Error('This track only streams over SABR, which the server relay can’t play. The BitChord extension can.');
+        throw new Error('This track only streams over SABR, which the server relay’s playback can’t handle.');
       }
       throw lastError instanceof Error ? lastError : new Error('No YouTube client could stream this track');
     } catch (error) {
@@ -261,9 +262,9 @@ export class YouTubeEngine {
     this.direct = null;
     this.progressive = false;
 
-    // CORS-clean for the Web Audio graph (Automix, EQ): the extension's
-    // googlevideo rules answer CORS headers. The relay's progressive path
-    // needs null instead — see startProgressive.
+    // CORS-clean for the Web Audio graph (Automix, EQ): the Shaka path sends
+    // CORS and googlevideo answers it. The relay's progressive path needs
+    // null instead — see startProgressive.
     this.audio.crossOrigin = 'anonymous';
 
     const direct = hasDirectAudio(info);
@@ -684,7 +685,7 @@ function codecName(codec: string | null): string | null {
   return codec.toUpperCase();
 }
 
-/** Whether playback travels through the server relay rather than the extension (web/docs/relay.md). */
+/** Whether playback travels through the server relay — the only transport (web/docs/relay.md). */
 function isRelayMode(): boolean {
   return getBridge()?.transport === 'server';
 }

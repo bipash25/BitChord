@@ -26,8 +26,9 @@ phase:
   — never the public site, never a personal account.
 - **become a general proxy.** Every method is limited to an allowlist of hosts.
 
-What it *does* do — the extension's `declarativeNetRequest` rules
-(`web/extension/lib/rules.ts`), server-side:
+What it *does* do — the header surgery the extension's `declarativeNetRequest`
+rules used to perform (the extension is gone; its rules went with it),
+server-side:
 
 | Request | Headers the relay sets |
 |---|---|
@@ -68,15 +69,13 @@ Methods served:
 | `yt.fetch` (no `auth`) | allowlisted YouTube hosts, impersonated as the table above |
 | `yt.fetch` (`auth: true`) | `unauthenticated`: "The relay can't sign YouTube requests. The extension can." |
 | `addon.fetch` | any `https://` URL (user-added addon servers), no cookies, capped |
-| `lyrics.fetch` | only the hosts in `web/extension/lib/lyricHosts.ts` |
+| `lyrics.fetch` | only the hosts in the relay's `LYRIC_ORIGINS` (`web/relay/src/hosts.ts`) |
 | `lyrics.permissions` | `{ granted: origins.filter(host is allowlisted) }` — the relay needs no grants |
 | `lyrics.requestPermissions` | no-op `{}` |
 | `yt.authState` | the static signed-out `YtAuthState` |
-| `spotify.authState` | the static signed-out `SpotifyAuthState` |
-| `discord.state` | `{ available: false, … }` |
 | anything else | `{ ok: false, error: { code: 'unsupported', … } }` |
 
-Responses are serialised exactly as `extension/lib/ytFetch.ts` does: text
+Responses are serialised the way the extension's `ytFetch` did: text
 bodies as `bodyEncoding: 'text'`, anything else base64.
 
 The relay is stateless. It keeps **no** cookies, tokens or user data, and adds
@@ -175,8 +174,10 @@ wins. The app work is:
    not the mobile redesign.
 
 Capabilities already make the rest of the UI degrade correctly: the relay
-reports no `yt.auth`/`spotify`/`discord`/`yt.stats`, and the settings rows and
-`useYtAuth` already render "Needs the extension" for missing capabilities.
+reports no `yt.auth`/`yt.stats`, and the settings rows and `useYtAuth` render
+their signed-out states for missing capabilities. Spotify no longer reads a
+capability at all — the page's own PKCE sign-in is configured by
+`VITE_SPOTIFY_CLIENT_ID`, and unconfigured means its quiet state.
 
 ## Playback in relay mode — constraints
 
@@ -317,11 +318,32 @@ InnerTube call once signed in):
   works on mobile.
 - Identity for the sidebar (name, avatar): `account_menu` on the signed-in
   session.
-- Stated plainly: whether InnerTube serves the YTM library endpoints to this
-  TV-OAuth bearer on the WEB_REMIX client is verified the first time a real
-  account completes the flow — NewPipe's account endpoints work this way
-  today, but the library families (FEmusic_*) are ours to confirm. A family
-  that refuses degrades to signed-out, the way an expired login already does.
+- Measured 2026-11-21, a real account through the flow: the device exchange
+  works from datacenter egress, and the bearer *authenticates* — the
+  anonymous bot-check is replaced by HTTP 403 PERMISSION_DENIED ("The caller
+  does not have permission") on `player`. The cause is in the grant, not the
+  IP: the TV flow requests the Data-API-era scope
+  `http://gdata.youtube.com https://www.googleapis.com/auth/youtube-paid-content`
+  (youtubei.js `core/OAuth2.js`), which does not cover InnerTube's internal
+  `player`. The matrix in `web/docs/private-deployment.md` has since answered
+  the player half: **403 on WEB, WEB_REMIX and ANDROID alike — the TV bearer
+  does not open InnerTube playback, on any client.** Playback through a
+  public relay is therefore credential-blocked until something changes
+  upstream; on a private deployment the cookie fallback
+  (private-deployment.md) is the path. The rest of the matrix has since
+  closed the question completely: browse, the library families and
+  `account_menu` all answer the same 403, and the official Data API v3 —
+  which the gdata scope genuinely reaches — is refused only because the TV
+  client's backing Google-internal project has that API disabled.
+  **There is no cookieless sign-in for InnerTube: the bearer authenticates
+  and opens nothing.** Phase 2's OAuth sign-in is therefore dropped; the
+  private deployment's cookie fallback is the only credential path, and a
+  public relay stays anonymous-only — browse, search, lyrics, addons —
+  unless its operator self-hosts at home, where residential egress plays
+  anonymously without any credential at all. The private path is confirmed:
+  with a real jar on the dev VPS, yt-dlp resolved itag 251 over https from
+  that same bot-checked egress, and a fallback-loaded relay passed the wall
+  on its first live probe (see `web/docs/private-deployment.md`).
 - Age-restricted playback: the signed web clients' streams still carry the
   ~60–70 s stream-protection problem (`web/docs/youtube-playback.md`),
   independent of how auth travels; age-gated tracks may stay unplayable until
@@ -332,13 +354,27 @@ Spotify app is registered once (client id, the site's redirect URIs); PKCE
 keeps everything in the browser with no secret. Liked songs, playlists, the
 library and import-to-YouTube-Music all work through the official Web API.
 **Canvas is cut** — it was the unofficial Pathfinder API and needed `sp_dc`.
+Landed as written: `web/app/src/data/spotify/auth.ts` holds the PKCE flow and
+the token pair (localStorage, S256, redirect URI `{origin}/spotify`), `api.ts`
+reads the library through `v1/me/playlists`, `v1/playlists/{id}/tracks` and
+`v1/me/tracks`, and the `spotify.*` bridge methods and the `spotify`
+capability are gone from the contract and the relay's mirror. One measured
+deviation from the ideal: Spotify publishes no token-revocation endpoint, so
+"Disconnect" discards the token pair locally (the remedy its own docs give for
+a dead grant) and the README points at spotify.com/account/apps for removing
+the grant itself; the scopes granted are read-only, which bounds what a
+forgotten grant can read. An unset `VITE_SPOTIFY_CLIENT_ID` is not an error:
+every Spotify surface renders its quiet "not configured on this deployment"
+state.
 
-**Discord: a decision, not a default.** Rich presence from the web now means
-the server holds the user's Discord token and runs a gateway per connected
-user — the same terms-violating automation the extension performed, with
-worse custody. Deferred until sign-in and Spotify land; either cut Discord
-from the web or ship it opt-in with the one-line warning, as the owner
-decides.
+**Discord: cut.** Rich presence from the web would mean the server holds the
+user's Discord token and runs a gateway per connected user — the same
+terms-violating automation the extension performed, with worse custody.
+Decided with the removal (2026-11-21): Discord is gone from the web app
+entirely — its settings page and presence wiring, and the `discord.*` bridge
+methods from the contract and the relay's mirror. It can come back only as an
+opt-in design that doesn't put a user token on the server, never as a port of
+the extension's gateway.
 
 **The removal, one mechanical pass:** delete `web/extension/`; remove the
 external and Firefox-relay transports from `web/shared/src/bridge/client.ts`

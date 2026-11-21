@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CHROMIUM_USER_AGENT, isAddonUrl, isLyricOrigin, LYRIC_ORIGINS, sanitiseHeaders, ytImpersonationFor } from './hosts.js';
+import { CHROMIUM_USER_AGENT, isAddonUrl, isInnerTubeUrl, isLyricOrigin, LYRIC_ORIGINS, sanitiseHeaders, ytImpersonationFor } from './hosts.js';
 
 /** Every allowlist and impersonation decision of web/docs/relay.md's table. */
 
@@ -37,6 +37,16 @@ describe('ytImpersonationFor', () => {
       origin: 'https://www.youtube.com',
       referer: 'https://www.youtube.com/',
     });
+  });
+
+  it('names exactly the InnerTube family a fallback credential signs', () => {
+    expect(isInnerTubeUrl(url('https://music.youtube.com/youtubei/v1/player'))).toBe(true);
+    expect(isInnerTubeUrl(url('https://www.youtube.com/youtubei/v1/account/account_menu'))).toBe(true);
+    // The bootstrap and BotGuard rows stay anonymous; everything else is not InnerTube at all.
+    expect(isInnerTubeUrl(url('https://www.youtube.com/sw.js_data'))).toBe(false);
+    expect(isInnerTubeUrl(url('https://www.youtube.com/api/jnn/GenerateIT'))).toBe(false);
+    expect(isInnerTubeUrl(url('https://www.youtube.com/watch'))).toBe(false);
+    expect(isInnerTubeUrl(url('https://evil.example.com/youtubei/v1/player'))).toBe(false);
   });
 
   it('refuses everything the table does not name', () => {
@@ -94,6 +104,21 @@ describe('sanitiseHeaders', () => {
         'content-length': '999',
       }),
     ).toEqual({ accept: '*/*' });
+  });
+
+  it('forwards a page-held Authorization only when the caller allows it, and a SAPISIDHASH never', () => {
+    // yt.fetch allows it: a page-held credential is the caller's own, per-call.
+    expect(sanitiseHeaders({ authorization: 'Bearer x' }, { forwardAuthorization: true })).toEqual({
+      authorization: 'Bearer x',
+    });
+    // The SAPISIDHASH is the relay's scheme to build over its own jar, never a page's to speak.
+    expect(sanitiseHeaders({ authorization: 'SAPISIDHASH 1_forged' }, { forwardAuthorization: true })).toEqual({});
+    // A cookie is never the page's to send, whichever way the Authorization goes.
+    expect(sanitiseHeaders({ authorization: 'Bearer x', cookie: 'a=b' }, { forwardAuthorization: true })).toEqual({
+      authorization: 'Bearer x',
+    });
+    // addon and lyrics make no such allowance: no credential crosses to third-party hosts.
+    expect(sanitiseHeaders({ authorization: 'Bearer x' })).toEqual({});
   });
 
   it('lowercases what it keeps', () => {

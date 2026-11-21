@@ -1,6 +1,6 @@
 /**
  * Ambient declarations for the Node APIs the relay touches: `node:http`,
- * `node:fs` and `process`.
+ * `node:crypto`, `node:fs` and `process`.
  *
  * Why not `@types/node`: the relay's devDependencies are exactly the three
  * `web/app` pins (relay.md), so its dependency tree stays a subset of the
@@ -19,8 +19,20 @@ declare var process: {
 };
 
 declare module 'node:fs' {
-  /** The one call the relay makes: reading its own package.json for `ping`. */
+  /** Reads its own package.json for `ping`, and the fallback jar at startup. */
   export function readFileSync(path: string | URL): Uint8Array;
+  /** Persists the living jar as YouTube rotates the fallback session. */
+  export function writeFileSync(path: string | URL, data: string): void;
+}
+
+declare module 'node:crypto' {
+  /** The one algorithm the relay uses: the fallback's SAPISIDHASH digest. */
+  export interface Hash {
+    update(data: string): Hash;
+    digest(encoding: 'hex'): string;
+  }
+  /** The one call the relay makes: `createHash('sha1')` for that digest. */
+  export function createHash(algorithm: 'sha1'): Hash;
 }
 
 declare module 'node:http' {

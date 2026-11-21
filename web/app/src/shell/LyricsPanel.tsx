@@ -2,7 +2,6 @@
 import '@uimaxbai/am-lyrics/am-lyrics.js';
 import { Check, ChevronDown, Loader2, Minus, Settings2 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { useCanvas } from '@/data/spotify/canvas';
 import { getBridge } from '@/extension/bridge';
 import { Menu, MenuHeader, MenuItem, MenuSeparator } from '@/components/Menu';
 import { LyricClock } from '@/lyrics/clock';
@@ -314,54 +313,16 @@ function PermissionNotice({ origins }: { origins: string[] }) {
     <div className="mx-4 my-1.5 flex items-center gap-2.5 rounded-[10px] bg-quinary px-2.5 py-2 type-callout text-secondary">
       <span>
         {names.slice(0, 2).join(', ')}
-        {names.length > 2 ? ` and ${names.length - 2} more` : ''} need the extension’s permission.
+        {names.length > 2 ? ` and ${names.length - 2} more` : ''} need the server relay’s permission.
       </span>
       <button
         className="flex-none type-callout-emphasized text-key"
-        // The notice stays until the extension confirms the grant (checked when this tab comes back).
+        // The notice stays until the transport confirms the grant (checked when this tab comes back).
         onClick={() => void getBridge()?.call('lyrics.requestPermissions', { origins })}
       >
         Allow
       </button>
     </div>
-  );
-}
-
-/**
- * The track's Spotify Canvas behind the lyrics, dimmed so they stay legible.
- * Muted and looping, it fades in once it can play and pauses with the music.
- *
- * The blur runs on a quarter-size video that is then scaled up 4×: a 3px blur
- * there reads as about 12px on screen for a sixteenth of the pixels, which is
- * what keeps a blurred, playing video cheap. The 5% overscan on each side
- * keeps the soft edges out of view.
- */
-function CanvasBackdrop({ url }: { url: string }) {
-  const video = useRef<HTMLVideoElement>(null);
-  const [ready, setReady] = useState(false);
-  const playing = usePlayer((s) => s.status === 'playing' || s.status === 'buffering');
-  useEffect(() => setReady(false), [url]);
-  useEffect(() => {
-    const el = video.current;
-    if (!el || !ready) return;
-    if (playing) void el.play().catch(() => undefined);
-    else el.pause();
-  }, [playing, ready]);
-  return (
-    <video
-      ref={video}
-      key={url}
-      className="absolute top-[-5%] left-[-5%] -z-1 size-[27.5%] origin-[0_0] scale-400 object-cover opacity-0 blur-[3px] transition-opacity duration-600 [mask-image:linear-gradient(to_bottom,rgb(0_0_0/1),rgb(0_0_0/0.85))] data-ready:opacity-85"
-      data-ready={ready || undefined}
-      src={url}
-      muted
-      loop
-      playsInline
-      preload="auto"
-      aria-hidden="true"
-      onCanPlay={() => setReady(true)}
-      onError={() => setReady(false)}
-    />
   );
 }
 
@@ -373,7 +334,8 @@ const fullSizes =
 /**
  * The lyrics, with their provider picker and empty states: the side panel
  * (report §7), and the right-hand column of the full-screen player, where the
- * lines are larger and the player's mesh stands in for the Canvas.
+ * lines are larger. (Spotify's Canvas once played behind these; it went with
+ * the extension, relay.md phase 2, and the player's mesh backdrop remains.)
  */
 export function LyricsPanel({ variant = 'panel' }: { variant?: 'panel' | 'full' }) {
   const lyrics = useLyrics();
@@ -383,7 +345,6 @@ export function LyricsPanel({ variant = 'panel' }: { variant?: 'panel' | 'full' 
   // empty state: the lyrics didn't go missing, this one provider hasn't got them.
   const picked = useLyricsUi((s) => s.picked[videoId]);
   const ungranted = useUngranted();
-  const canvas = useCanvas();
   const fontReady = useLyricFont();
   const result = lyrics.data;
   const full = variant === 'full';
@@ -394,7 +355,6 @@ export function LyricsPanel({ variant = 'panel' }: { variant?: 'panel' | 'full' 
 
   return (
     <div className={full ? `${panel} ${fullSizes}` : panel}>
-      {canvas && variant === 'panel' && <CanvasBackdrop url={canvas} />}
       <ProviderPicker current={result?.source ?? null} full={full} />
       {/* Only worth raising when nothing was found: then the hosts behind the extension might have it. */}
       {ungranted.length > 0 && !result && !lyrics.isFetching && <PermissionNotice origins={ungranted} />}

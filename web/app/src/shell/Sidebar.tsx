@@ -1,5 +1,4 @@
 import { ArrowUpRight, ListMusic, Settings } from 'lucide-react';
-import { MdOutlineExtension } from 'react-icons/md';
 import { PrefetchLink, PrefetchNavLink } from '@/components/PrefetchLink';
 import { LogoMark } from '@/components/icons/LogoMark';
 import {
@@ -19,8 +18,7 @@ import { config } from '@/config';
 import { LIBRARY_SECTIONS, type LibrarySection } from '@/data/music/library';
 import { useLibraryPlaylists, useSignedIn } from '@/data/music/queries';
 import { useSpotifyPlaylists } from '@/data/spotify/queries';
-import { useExtensionUpdate } from '@/extension/useExtensionUpdate';
-import { useSpotifySignedIn } from '@/extension/useSpotifyAuth';
+import { useSpotifySignedIn } from '@/data/spotify/auth';
 import { useUi } from '@/state/ui';
 import { AccountButton } from './AccountButton';
 
@@ -105,7 +103,7 @@ function LibraryNav({ onNavigate }: { onNavigate: () => void }) {
   );
 }
 
-/** Spotify's playlists, once the extension can read them as the user (prompt §7.1). */
+/** Spotify's playlists, once the page is signed in to Spotify as the user (prompt §7.1). */
 function SpotifyNav({ onNavigate }: { onNavigate: () => void }) {
   const playlists = useSpotifyPlaylists();
   return (
@@ -137,7 +135,6 @@ function SpotifyNav({ onNavigate }: { onNavigate: () => void }) {
 export function Sidebar() {
   const drawerOpen = useUi((s) => s.drawerOpen);
   const setDrawerOpen = useUi((s) => s.setDrawerOpen);
-  const update = useExtensionUpdate();
   const signedIn = useSignedIn();
   const spotifySignedIn = useSpotifySignedIn();
   const close = () => setDrawerOpen(false);
@@ -163,18 +160,6 @@ export function Sidebar() {
           {spotifySignedIn && <SpotifyNav onNavigate={close} />}
         </div>
         <div className="flex flex-col gap-2 pt-3 pr-3 pb-5 pl-5">
-          <PrefetchNavLink to="/extension" className={item} onClick={close}>
-            {/* Chrome's own toolbar glyph for extensions (Material "extension"). */}
-            <span className={icon}>
-              <MdOutlineExtension size={18} />
-            </span>
-            <span className={navLabel}>BitChord Extension</span>
-            {update.state === 'available' && (
-              <span className="ml-auto rounded-[10px] bg-key px-[7px] py-0.5 type-subhead-emphasized text-white" title={`Version ${update.latest.version} is available`}>
-                Update
-              </span>
-            )}
-          </PrefetchNavLink>
           <AccountButton />
           <div className="flex items-center justify-between">
             <a className="inline-flex items-center gap-1 ps-1 type-callout text-primary hover:underline" href={config.androidAppUrl} target="_blank" rel="noreferrer">

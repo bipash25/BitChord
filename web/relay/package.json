@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "The BitChord server relay (web/docs/relay.md): the extension's anonymous YouTube work, served over HTTP for browsers that cannot install one.",
+  "description": "The BitChord server relay (web/docs/relay.md): the site's YouTube networking served over HTTP, on any browser.",
   "engines": {
     "node": ">=22"
   },

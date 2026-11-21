@@ -164,7 +164,7 @@ export default function SearchPage() {
       <div className="sticky top-0 z-[calc(var(--z-default)+5)] flex justify-center px-(--body-gutter) py-3 before:absolute before:inset-0 before:-z-1 before:bg-header-material before:[backdrop-filter:saturate(180%)_blur(20px)]">
         <SearchField initial={query} onSearch={(q) => setParams(q ? { q } : {})} />
       </div>
-      {missing ? <NeedsExtension what="and search YouTube Music" /> : query ? <Results query={query} /> : <Landing />}
+      {missing ? <NeedsExtension /> : query ? <Results query={query} /> : <Landing />}
     </>
   );
 }

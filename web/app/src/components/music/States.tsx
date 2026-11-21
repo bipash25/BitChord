@@ -1,5 +1,3 @@
-import { PrefetchLink } from '@/components/PrefetchLink';
-
 /** A page-sized message, centred: also the Spotify page's sign-in invitation. */
 export const stateStyles = {
   state: 'mx-auto my-20 flex max-w-[420px] flex-col items-center gap-2 px-(--body-gutter) text-center',
@@ -8,17 +6,19 @@ export const stateStyles = {
   button: 'mt-3 inline-flex h-8 items-center rounded-pill bg-key-bg px-4 type-body-emphasized text-white',
 };
 
-/** In place of a YouTube page when the extension isn't installed (prompt §1): an invitation, not an error. */
+/**
+ * In place of a YouTube page when the server relay can't be reached (prompt
+ * §1): an explanation, not an error. Nothing can be installed to fix it —
+ * the relay is the only transport — so the answer is a reload.
+ */
 export function NeedsExtension({ what = 'YouTube Music' }: { what?: string }) {
   return (
     <div className={stateStyles.state}>
-      <p className={stateStyles.title}>Browse {what} with the BitChord extension</p>
+      <p className={stateStyles.title}>Can’t reach the server relay</p>
       <p className={stateStyles.detail}>
-        The extension lets this page reach YouTube Music from your own browser. Addons and lyrics work without it.
+        BitChord brings {what} into this page through its server relay, and it didn’t answer. Check your connection and
+        reload.
       </p>
-      <PrefetchLink to="/extension" className={stateStyles.button}>
-        Get the Extension
-      </PrefetchLink>
     </div>
   );
 }

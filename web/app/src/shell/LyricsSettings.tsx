@@ -17,8 +17,7 @@ const moveButton = 'grid size-[26px] place-items-center rounded-[6px] text-secon
 /**
  * Lyric providers, as the desktop's settings have them: switch each on or
  * off, put them in order, prefer syllable timing, and the PaxSenix key. Plus
- * the one thing only the web needs: letting the extension reach the hosts a
- * page can't.
+ * the one thing only the web needs: which hosts its transport will fetch.
  */
 export function LyricsSettings({ onClose }: { onClose: () => void }) {
   const { order, disabled, preferSyllables, paxsenixKey, setEnabled, move, setPreferSyllables, setPaxsenixKey, reset } =
@@ -97,14 +96,14 @@ export function LyricsSettings({ onClose }: { onClose: () => void }) {
             </span>
           </label>
 
-          <h3 className={section}>Extension access</h3>
+          <h3 className={section}>Host access</h3>
           {granted === null ? (
-            <p className={note}>KuGou, Musixmatch, Genius and PaxSenix need the BitChord extension.</p>
+            <p className={note}>KuGou, Musixmatch, Genius and PaxSenix don’t let web pages ask them directly.</p>
           ) : missing.length ? (
             <div className="flex items-center gap-3">
               <p className={note}>
-                KuGou, Musixmatch, Genius and PaxSenix don’t let web pages ask them directly. Allow the extension to,
-                once.
+                KuGou, Musixmatch, Genius and PaxSenix don’t let web pages ask them directly. The server relay fetches
+                the ones it allows; the rest stay off.
               </p>
               <button className="flex-none rounded-[14px] bg-key px-3.5 py-1.5 type-callout-emphasized text-white" onClick={() => void getBridge()?.call('lyrics.requestPermissions', { origins: missing })}>
                 Allow

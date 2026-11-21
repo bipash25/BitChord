@@ -13,7 +13,7 @@ interface UiState {
   /** The sidebar as a drawer, below 484px where it's otherwise hidden. */
   drawerOpen: boolean;
   setDrawerOpen: (open: boolean) => void;
-  /** The extension install banner, dismissed for this tab only. */
+  /** The relay-unreachable banner, dismissed for this tab only. */
   installBannerDismissed: boolean;
   dismissInstallBanner: () => void;
 }

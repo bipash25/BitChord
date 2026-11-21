@@ -21,15 +21,39 @@
  *   e.g. node scripts/probe.mjs http://localhost:8787
  * Exits non-zero on any failure, naming the step that failed.
  */
-import { Innertube, Utils, YT } from 'youtubei.js';
+import { Innertube, Platform, Utils, YT } from 'youtubei.js';
 
-/** The Debug page's acceptance set (web/app/src/pages/DebugPage.tsx TEST_TRACKS): a spread of eras and regions, none age-gated. */
+// The same deciphering evaluator the app installs (innertube.ts's create):
+// YouTube.js runs the player script's signature and n-parameter functions
+// through it. Without this, a track that resolves perfectly fails at the
+// decipher step with "provide your own JavaScript evaluator" — which measures
+// the harness, not the relay.
+Platform.shim.eval = async (data, env) => {
+  const properties = [];
+  if (env.n) properties.push(`n: exportedVars.nFunction(${JSON.stringify(env.n)})`);
+  if (env.sig) properties.push(`sig: exportedVars.sigFunction(${JSON.stringify(env.sig)})`);
+  return new Function(`${data.output}\nreturn { ${properties.join(', ')} }`)();
+};
+
+/**
+ * The acceptance set. The first four are the Debug page's spread of eras and
+ * regions; the next four the owner hand-verified on YouTube (2026-11-21)
+ * before trusting them here. Every id has resolved through a
+ * fallback-loaded relay with a 206 range-fetch to show for it — except the
+ * one deliberately left out: Eminem · Lose Yourself (4wOLVrGHiIU, explicit)
+ * measured "Video unavailable" from every client under the fallback, the
+ * explicit/age-gated family — the throwaway isn't age-verified, and a relay
+ * wanting those tracks needs a burner that is.
+ */
 const TRACKS = [
   { id: 'ZEcqHA7dbwM', label: 'Frank Sinatra · Fly Me To The Moon (1964)' },
   { id: 'BSTsnWoslP4', label: 'Queen · Bohemian Rhapsody (1975)' },
   { id: 'J7p4bzqLvCw', label: 'The Weeknd · Blinding Lights (2019)' },
   { id: 'NJAv_7lHUIU', label: 'Arijit Singh · Kesariya (Hindi)' },
-  { id: '4wOLVrGHiIU', label: 'Eminem · Lose Yourself (explicit)' },
+  { id: 'nfs8NYg7yQM', label: 'Attention (owner-verified)' },
+  { id: 'Xi8Fabcb_MA', label: 'Chaand Baliyan (owner-verified)' },
+  { id: 'kTJczUoc26U', label: 'STAY (owner-verified)' },
+  { id: 'a7fzkqLozwA', label: 'I Like Me Better (owner-verified)' },
 ];
 
 /** resolver.ts's CLIENT_ORDER: VISIONOS first — it answers with direct URLs and needs no PO token. */

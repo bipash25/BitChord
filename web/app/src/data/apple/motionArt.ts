@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { metered, useReducedMotion } from '@/data/spotify/canvas';
+import { metered, useReducedMotion } from '@/lib/motionPrefs';
 import { lyricsGet, onGranted, urlWith } from '@/lyrics/http';
 import { queryClient } from '@/lib/queryClient';
 import { obj, parse, str, type Json } from './artistPage';

@@ -5,10 +5,10 @@ import { queryClient } from '@/lib/queryClient';
 import { extensionQueryKey, useExtension } from './useExtension';
 
 /**
- * Who YouTube requests act as (prompt §5.3). The extension owns the session;
+ * Who YouTube requests act as (prompt §5.3). The transport owns the session;
  * this is the page's copy of the names and pictures it reports, kept current
- * three ways: a read on start, the extension's pushes (Bridge.subscribe), and
- * a re-read when the tab regains focus, for the pushes a sleeping worker
+ * three ways: a read on start, the transport's pushes (Bridge.subscribe), and
+ * a re-read when the tab regains focus, for the pushes a background tab
  * missed.
  */
 
@@ -117,7 +117,7 @@ export function useSelectChannel() {
   return useMutation({
     mutationFn: async (channelId: string) => {
       const extension = detected();
-      if (!extension) throw new Error('The extension is not installed');
+      if (!extension) throw new Error('The server relay is not connected');
       return extension.bridge.call('yt.selectChannel', { channelId });
     },
     onSuccess: adopt,
@@ -134,7 +134,7 @@ export function useSetConnected() {
   return useMutation({
     mutationFn: async (connected: boolean) => {
       const extension = detected();
-      if (!extension) throw new Error('The extension is not installed');
+      if (!extension) throw new Error('The server relay is not connected');
       return extension.bridge.call('yt.setConnected', { connected });
     },
     onSuccess: adopt,

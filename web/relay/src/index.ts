@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { dispatchDeps, handle } from './dispatch.js';
+import { loadFallbackCredential } from './fallback.js';
+import { dispatchDeps, handle, type DispatchDeps } from './dispatch.js';
 import { isBridgeRequest, type BridgeRequest } from './contract.js';
 import { BodyTooLargeError, IpLimiter, MAX_BODY_BYTES, readBody } from './limits.js';
 import { VERSION } from './version.js';
@@ -38,6 +39,18 @@ const allowedOrigins = parseOrigins(process.env.RELAY_ALLOWED_ORIGINS);
  */
 const trustProxy = /^(1|true|yes)$/i.test(process.env.RELAY_TRUST_PROXY ?? '');
 const limiter = new IpLimiter();
+
+/**
+ * The private deployment's fallback credential (`web/docs/private-deployment.md`):
+ * the throwaway account's cookie jar, parsed once at startup. Rotation is an
+ * env swap plus a restart by design — no hot reload, so there is never a
+ * window with two jars live. A configured file with nothing usable in it
+ * refuses to boot: a deployment that thinks it has playback and silently
+ * doesn't is the worse failure.
+ */
+const fallback = loadFallbackCredential(process.env.RELAY_FALLBACK_COOKIES_FILE);
+/** The dispatcher's wiring: the server's fetch and cache, plus the fallback. */
+const deps: DispatchDeps = { ...dispatchDeps, fallback };
 
 /** Reads one header, joining a repeated one as HTTP does. */
 function header(headers: IncomingMessage['headers'], name: string): string | undefined {
@@ -135,7 +148,7 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
     return;
   }
 
-  const envelope = await handle(payload as BridgeRequest, dispatchDeps);
+  const envelope = await handle(payload as BridgeRequest, deps);
   response.setHeader('vary', 'Origin');
   if (allowed) response.setHeader('access-control-allow-origin', origin);
   answer(response, 200, 'application/json', JSON.stringify(envelope));
@@ -156,6 +169,8 @@ server.listen(port, () => {
   console.log(`BitChord relay ${VERSION} listening on http://0.0.0.0:${port}/bridge`);
   console.log(`allowed origins: ${[...allowedOrigins].join(', ')}`);
   if (trustProxy) console.log('trusting X-Forwarded-For (RELAY_TRUST_PROXY)');
+  // Names the mode, never the jar: the credential's value appears in no log line.
+  if (fallback) console.log('fallback credential loaded: anonymous InnerTube calls will be signed by it');
 });
 
 server.on('error', (error) => {

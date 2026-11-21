@@ -11,7 +11,7 @@ import { useSignedIn } from '@/data/music/queries';
 import type { HeaderInfo } from '@/data/music/types';
 import { useSpotifyPlaylistInfo, useSpotifyRows } from '@/data/spotify/queries';
 import { useExtension } from '@/extension/useExtension';
-import { useSpotifySignedIn } from '@/extension/useSpotifyAuth';
+import { useSpotifyAuth, useSpotifySignedIn } from '@/data/spotify/auth';
 import { useArtworkColor } from '@/lib/artworkColor';
 import { usePageTint } from '@/lib/usePageTint';
 import { PlaylistSkeleton } from '@/skeletons/PageSkeletons';
@@ -26,11 +26,15 @@ import { detailFooter } from './pageStyles';
 export default function SpotifyPlaylistPage() {
   const id = decodeURIComponent(useParams().id ?? '');
   const extension = useExtension();
+  const auth = useSpotifyAuth();
   const signedIn = useSpotifySignedIn();
   const info = useSpotifyPlaylistInfo(id);
   const rows = useSpotifyRows(id);
   usePageTint(useArtworkColor(info.data?.imageUrl));
 
+  if (auth.state === 'unconfigured') return <EmptyState title="Spotify isn’t configured on this deployment" />;
+  // The rows come from Spotify directly, but every one of them is resolved to
+  // a YouTube Music song, and that search is the relay's to carry.
   if (extension.state === 'missing') return <NeedsExtension what="your Spotify playlists" />;
   if (!signedIn) return <EmptyState title="Sign in to Spotify" detail="Open Spotify in the sidebar to connect your account." />;
   if (rows.status === 'error' && !rows.rows.length) return <LoadError error={rows.error} onRetry={rows.retry} />;

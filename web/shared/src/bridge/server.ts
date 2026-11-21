@@ -15,17 +15,16 @@ import type { Bridge } from './client';
 
 /**
  * The server relay transport (web/docs/relay.md): the same bridge contract,
- * served over HTTP by the `web/relay` service instead of the extension.
+ * served over HTTP by the `web/relay` service. Phase 2's only transport —
+ * the extension it once trailed in detection is gone.
  *
  * The relay answers the anonymous subset — `ping`, `yt.fetch`, `lyrics.fetch`,
  * `addon.fetch` — and reports every identity-holding method as signed out or
- * unsupported. Detection prefers the extension, which can do more; this
- * transport exists for browsers that can't install anything at all (every
- * mobile browser, locked-down devices).
+ * unsupported until phase 2's brokered sign-in lands.
  *
  * One endpoint: `POST {base}/bridge` with a `BridgeRequest` envelope, answered
- * with a `BridgeResponse` envelope. As with the extension, no credentials
- * cross this boundary: the relay holds none.
+ * with a `BridgeResponse` envelope. No credentials cross this boundary: the
+ * relay holds none.
  */
 
 const DEFAULT_TIMEOUT_MS = 30_000;

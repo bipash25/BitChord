@@ -80,11 +80,63 @@ their history, no server custody.
 
 ## Open before this is real
 
-The spike, not yet run: one `player` call from the VPS with the cookie,
-one with a device-flow bearer. Whichever answers settles the fallback
-credential type for good — cookie is the expectation, bearer would be the
-nicer surprise (revocable, scoped). `web/relay`'s devDependency on
-`youtubei.js` is everything the test needs.
+The spike, first result 2026-11-21 (a real account through the flow, run
+from this VPS): the device exchange works end-to-end — code minted,
+authorized, tokens returned — and the bearer **authenticates**. The
+anonymous bot-check disappears; `player` instead answers HTTP 403
+`PERMISSION_DENIED`, "The caller does not have permission". The cause sits
+in the grant, not the IP: the TV flow requests the Data-API-era scope
+`http://gdata.youtube.com https://www.googleapis.com/auth/youtube-paid-content`
+(youtubei.js `core/OAuth2.js` line 162), which plausibly covers account
+endpoints but not InnerTube's internal `player`. The second code entry
+settled the player half: **403 PERMISSION_DENIED on WEB, WEB_REMIX and
+ANDROID alike — the bearer does not open InnerTube playback on any
+client.** Cookie is therefore no longer the expectation for playback; it
+is the only candidate. Still open: whether the bearer opens the account
+endpoints (browse, the library families, `account_menu`) — and whether
+its gdata grant opens the official **Data API v3**, which would give
+library features a sanctioned path even if InnerTube refuses.
+
+The third code entry finished the matrix, and nothing opened: browse
+home, the music library and `account_menu` all answer the same 403
+PERMISSION_DENIED, and the official **Data API v3** — which the gdata
+scope really does reach — is refused only because the TV client's
+backing Google-internal project (861556708454) has that API disabled,
+which nobody outside Google can change. So there is **no cookieless
+sign-in for InnerTube at all**: the TV bearer authenticates and opens
+nothing. The cookie jar is therefore not the expectation but the only
+credential path — for the fallback, and for any per-user identity the
+deployment ever wants (bring-your-own-cookie, page-held and forwarded
+per call, is the natural v2).
+
+**The cookie spike answered, 2026-11-21, with a real jar on this VPS:**
+yt-dlp resolved itag 251 over https from this egress with the jar
+attached — the documented cookies-rescue-datacenter behavior, reproduced.
+The relay itself got just as far on its first live run: its probe passed
+YouTube's wall (every earlier run died at `LOGIN_REQUIRED`; this one
+returned formats and failed only at the local decipher step), with two
+harness bugs since fixed — the relay no longer signs VISIONOS calls (a
+session attached to that client is refused with a 400; it is
+anonymous-by-design, so its calls stay anonymous and the walk falls
+through to a web client the fallback does sign), and the probe now
+installs the app's JavaScript evaluator for signature deciphering. The
+final end-to-end probe run against a fallback-loaded relay is the
+acceptance test for the whole design.
+
+**It passed, 2026-11-21**: eight tracks — the four-era spread plus four
+the owner hand-verified on YouTube before trusting them — every one
+resolved as `YTMUSIC answered` with itag 251 and a media hop of `HTTP 206,
+131072 bytes, range honored`, no `Origin` on the fetch: the exact path a
+phone browser will take. VISIONOS answered the anonymous bot-check on
+every track (as designed; its calls stay unsigned and the walk falls
+through to the signed web client). One track was moved out of the set
+rather than counted as a failure: the explicit track (Lose Yourself)
+answers "Video unavailable" from every client under the fallback — the
+age/explicit family, which needs an age-verified burner, not a relay
+change. The run also exposed the rotation problem and its fix, both above:
+the static jar that resolved the first green run was dead half an hour
+later, so the jar is living now, absorbing YouTube's `Set-Cookie`
+rotations and persisting them back to the file it was seeded from.
 
 The harness is `C:\Users\Administrator\Projects\yt-pot-test\fallback-spike.mjs`,
 three modes: `anonymous` (the control — the refusal we already know),

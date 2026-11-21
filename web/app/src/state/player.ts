@@ -185,9 +185,9 @@ function getDecks(): Promise<Deck[]> {
       // crossOrigin is set per track by the engine, not once here: the Shaka
       // paths keep 'anonymous' (media from another origin is silent inside an
       // AudioContext unless fetched with CORS — prompt §6, the Web Audio
-      // caveat — and the extension's googlevideo rules answer it), while the
-      // relay's progressive path needs null, with which the element sends
-      // Origin and googlevideo answers 403 (relay.md §5).
+      // caveat — and googlevideo answers the CORS the Shaka paths send),
+      // while the relay's progressive path needs null, with which the
+      // element sends Origin and googlevideo answers 403 (relay.md §5).
       const engine = new YouTubeEngine(audio);
       const deck: Deck = { engine, audio, gain: 1 };
       engine.onFatal = (videoId, message) => {
@@ -250,10 +250,9 @@ function ensureAutomix(): Promise<AutomixGraph | null> {
   // The server relay refuses the graph: its tracks play on a tainted element
   // (no CORS on googlevideo, so Web Audio would output silence), and the
   // analysis fetches googlevideo directly too. The element-volume crossfade
-  // still works below without the graph (relay.md §5); the extension is what
-  // AutoMix needs.
+  // still works below without the graph (relay.md §5).
   if (relayTransport()) {
-    trackLog.i('AutoMix is off over the server relay: its Web Audio graph would be silent. The extension can run it.');
+    trackLog.i('AutoMix is off over the server relay: its Web Audio graph would be silent.');
     return Promise.resolve(null);
   }
   graphPromise ??= import('@/playback/automix').then(({ createAutomixGraph, analyzer }) => {
@@ -696,7 +695,7 @@ async function startAt(at: number, { startSec = 0, auto = false, autoplay = true
       index: at,
       nowPlaying: { ...hintOf(entry.track), title: entry.track.title || 'Can’t play this here yet' },
       status: 'error',
-      error: 'YouTube playback needs the BitChord extension.',
+      error: 'YouTube playback needs the server relay, which didn’t answer.',
     });
     return;
   }

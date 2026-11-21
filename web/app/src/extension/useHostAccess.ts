@@ -3,16 +3,16 @@ import { getBridge } from './bridge';
 
 export type HostAccess = 'checking' | 'unavailable' | 'granted' | 'needed';
 
-/** Opens the extension's permission page for [origins]. */
+/** Asks the transport for [origins]; a transport that needs no grants no-ops. */
 export function requestHostAccess(origins: readonly string[]): void {
   void getBridge()?.call('lyrics.requestPermissions', { origins: [...origins] });
 }
 
 /**
- * Whether the extension may reach every one of [origins] (its optional host
- * permissions), for Settings, with a request for the ones it may not. Asked
- * again whenever the tab comes back: the grant happens on the extension's
- * own page, in another tab.
+ * Whether the transport may reach every one of [origins] (the relay's
+ * allowlist), for Settings, with a request for the ones it may not. Asked
+ * again whenever the tab comes back: an allowlist can change with a
+ * redeploy, and a grant happens in another tab.
  */
 export function useHostAccess(origins: readonly string[]): { access: HostAccess; request: () => void } {
   const [granted, setGranted] = useState<string[] | null | 'unavailable'>(null);

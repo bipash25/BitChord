@@ -35,8 +35,9 @@ import { isLibrarySection, LIKED_MUSIC_PLAYLIST, type LibrarySection } from './l
 import type { AlbumPage, BrowseLink, BrowsePage, HeaderInfo, PlaylistPage, Shelf, Track } from './types';
 
 // TanStack Query for every browse request (prompt §1: caching, dedupe,
-// retries). YouTube requests need the extension, so every query waits for it;
-// pages render their install prompt instead when it's missing.
+// retries). YouTube requests travel through the relay, so every query waits
+// for it; pages render their unreachable-relay message instead when it's
+// missing.
 
 const STALE = 10 * 60_000;
 
@@ -85,7 +86,7 @@ export const playlistQuery = (id: string) =>
     staleTime: STALE,
   });
 
-/** True once the extension has answered; queries wait on it. */
+/** True once the relay has answered; queries wait on it. */
 export function useYouTubeReady(): { ready: boolean; missing: boolean } {
   const extension = useExtension();
   return {

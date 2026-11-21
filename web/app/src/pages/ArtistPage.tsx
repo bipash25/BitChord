@@ -120,10 +120,10 @@ export default function ArtistPage() {
           {!apple && appleUngranted.length > 0 && (
             // The lyrics panel's permission notice, as a pill over the photograph.
             <div className="mt-3 flex items-center gap-2.5 rounded-[999px] bg-[#0000004d] py-1.5 pr-2 pl-3.5 type-callout text-[#ffffffcc] [backdrop-filter:blur(20px)_saturate(1.6)]">
-              <span>Apple Music artist art needs the extension’s permission.</span>
+              <span>Apple Music artist art needs the server relay’s permission.</span>
               <button
                 className="flex-none rounded-[999px] bg-[#ffffff26] px-2.5 py-1 type-callout-emphasized text-white hover:bg-[#ffffff40]"
-                // Stays until the extension confirms the grant (checked when this tab comes back).
+                // Stays until the transport confirms the grant (checked when this tab comes back).
                 onClick={requestAppleAccess}
               >
                 Allow

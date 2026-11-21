@@ -1,11 +1,9 @@
 import { lazy, Suspense, useEffect } from 'react';
 import { resumeSession } from '@/party/listenTogether';
 import { startPartySync } from '@/party/partySync';
-import { useDiscordPresence } from '@/playback/discordPresence';
 import { startHistoryReporting } from '@/playback/historyReporting';
 import { startLivePresence } from '@/playback/livePresence';
 import { Outlet } from 'react-router';
-import { PrefetchLink } from '@/components/PrefetchLink';
 import { config } from '@/config';
 import { useExtension } from '@/extension/useExtension';
 import { isMobileBrowser } from '@/lib/platform';
@@ -29,7 +27,6 @@ const FullScreenPlayer = lazy(() => import('./FullScreenPlayer').then((m) => ({ 
  */
 export function AppShell() {
   useKeyboardShortcuts();
-  useDiscordPresence();
   // Listen Together: pick a party back up after a reload, and keep the player in step with it.
   useEffect(() => {
     resumeSession();
@@ -45,17 +42,17 @@ export function AppShell() {
   const fullScreen = useUi((s) => s.fullScreen);
 
   let banner = null;
-  // The banners are invitations for visitors who can't play at all: with the
-  // server relay answering, a phone plays (mini player + relay playback) and
-  // needs nothing, and a desktop keeps the extension invite only when no
-  // relay is configured (relay.md §7). 'missing' means nothing answered —
-  // extension or relay; 'checking' stays quiet until it settles.
+  // The banners are for visitors who can't play at all: with the server relay
+  // answering, a phone plays (mini player + relay playback) and needs nothing,
+  // and a desktop that can't reach it is told so — there is nothing to install
+  // (relay.md phase 2). 'missing' means the relay wasn't configured or didn't
+  // answer; 'checking' stays quiet until it settles.
   if (extension.state === 'missing') {
     if (mobile) {
       banner = (
         <Banner
           title="BitChord is better in the app."
-          detail="Phone browsers can’t run the BitChord extension. The Android app has everything."
+          detail="Playback here needs BitChord’s server relay, which didn’t answer. The Android app has everything."
           action={
             <a className={bannerButtonClass} href={config.androidAppUrl} target="_blank" rel="noreferrer">
               Get the App
@@ -66,12 +63,12 @@ export function AppShell() {
     } else if (!bannerDismissed) {
       banner = (
         <Banner
-          title="Play YouTube Music with the BitChord extension."
-          detail="Playback, YouTube Music sign-in, Spotify and Discord need the extension. Addons and lyrics work without it."
+          title="The server relay is unreachable."
+          detail="Playback, search, lyrics and addons travel through BitChord’s server relay, and it didn’t answer. Check your connection and reload."
           action={
-            <PrefetchLink className={bannerButtonClass} to="/extension">
-              Get the Extension
-            </PrefetchLink>
+            <button className={bannerButtonClass} onClick={() => location.reload()}>
+              Reload
+            </button>
           }
           onDismiss={dismissBanner}
         />
