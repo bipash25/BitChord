@@ -4,13 +4,13 @@ import shaka from 'shaka-player/dist/shaka-player.compiled';
 import { Constants, Utils, YT, type Innertube, type Misc } from 'youtubei.js/web';
 import { timed, trackLog } from '../trackLog';
 import { botguard } from './botguard';
-import { getBridge } from '@/extension/bridge';
 import { ytAuthSnapshot } from '@/extension/useYtAuth';
 import { getInnertube, getSignedInnertube } from './innertube';
 import {
   CLIENT_ATTEMPTS,
   usesWebPo,
   excludeClient,
+  isRelayMode,
   playerRequest,
   resolvePlayer,
   UnplayableError,
@@ -159,6 +159,10 @@ export class YouTubeEngine {
   /** Pays the cold costs before the first tap (InnerTubeXResolver.warm): the session, the player script, BotGuard. */
   async warm(): Promise<void> {
     this.yt ??= await getInnertube();
+    // Relay mode mints no tokens — playerRequest and startProgressive both
+    // skip them — so BotGuard's Create/GenerateIT round-trips would be pure
+    // waste: the page's interpreter fetch plus a relayed GenerateIT.
+    if (isRelayMode()) return;
     await botguard.init().catch((error: unknown) => trackLog.w(`BotGuard warm-up failed: ${String(error)}`));
   }
 
@@ -179,7 +183,9 @@ export class YouTubeEngine {
       const relay = isRelayMode();
       const player = relay ? null : await this.ensurePlayer();
       this.yt ??= await timed('InnerTube session', videoId, getInnertube);
-      void botguard.init().catch((error: unknown) => trackLog.w(`BotGuard init failed: ${String(error)}`, videoId));
+      // Same relay-mode skip as warm(): with no token ever minted there,
+      // BotGuard has nothing to do.
+      if (!relay) void botguard.init().catch((error: unknown) => trackLog.w(`BotGuard init failed: ${String(error)}`, videoId));
 
       const skip = new Set<PlayerClientName>();
       let lastError: unknown = null;
@@ -345,10 +351,9 @@ export class YouTubeEngine {
     const deciphered = await format.decipher(yt.session.player);
     if (!deciphered) throw new Error(`${client} returned no decipherable audio URL`);
     const url = new URL(deciphered);
-    // BotGuard clients attach the streaming token to the media URL, exactly
-    // as directManifest's url_transformer does for the Shaka path.
-    const pot = usesWebPo(client) ? await botguard.mint(videoId) : undefined;
-    if (pot) url.searchParams.set('pot', pot);
+    // No `pot` on the URL, unlike directManifest's Shaka path: the signed
+    // URL serves without one (the probe's 206 range-fetches measured exactly
+    // this hop), and no BotGuard runs in relay mode to mint it.
 
     // null, not 'anonymous': with it the element sends Origin and googlevideo
     // answers 403 (relay.md §5) — and the Web Audio it enabled was the first
@@ -683,11 +688,6 @@ function codecName(codec: string | null): string | null {
   if (codec.startsWith('ec-3')) return 'E-AC-3';
   if (codec.startsWith('ac-3')) return 'AC-3';
   return codec.toUpperCase();
-}
-
-/** Whether playback travels through the server relay — the only transport (web/docs/relay.md). */
-function isRelayMode(): boolean {
-  return getBridge()?.transport === 'server';
 }
 
 /** A progressive format's codec, from its mime type's `codecs="…"` parameter. */

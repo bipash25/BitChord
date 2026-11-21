@@ -1,6 +1,7 @@
 import type { ApiResponse, Innertube, YT } from 'youtubei.js/web';
 import { trackLog } from '../trackLog';
 import { botguard } from './botguard';
+import { getBridge } from '@/extension/bridge';
 
 /**
  * Which identity asks YouTube for a track, in order (prompt §5.2 step 5,
@@ -150,6 +151,11 @@ export function onSessionChanged() {
 
 // ---- The player request ------------------------------------------------------
 
+/** Whether playback travels through the server relay — the only transport (web/docs/relay.md). */
+export function isRelayMode(): boolean {
+  return getBridge()?.transport === 'server';
+}
+
 /**
  * Asks [client] for [videoId]'s player response. The parameters follow
  * googlevideo's example; `reloadPlaybackContext` is set when the SABR server
@@ -166,7 +172,13 @@ export async function playerRequest(
   client: PlayerClientName,
   reloadPlaybackContext?: unknown,
 ): Promise<ApiResponse> {
-  const poToken = await playerRequestToken(yt, client);
+  // No PO token in relay mode: the relay's fallback cookie is the
+  // credential, and the tokenless signed request is the measured-working
+  // shape — the probe resolves this exact track through it (YTMUSIC, itag
+  // 251, an HTTP 206 range-fetch). With a token attached, YouTube answers
+  // the web clients with SABR-only responses (the attested protocol), which
+  // the relay's progressive playback cannot play.
+  const poToken = isRelayMode() ? undefined : await playerRequestToken(yt, client);
   return yt.actions.execute('/player', {
     ...(poToken && { serviceIntegrityDimensions: { poToken } }),
     videoId,
@@ -180,8 +192,18 @@ export async function playerRequest(
   });
 }
 
-/** Why a playability status is a verdict on the track rather than on the client, or null if it isn't. */
-const AGE_GATE = /confirm your age|age-restricted|inappropriate for some users|sign in to confirm/;
+/**
+ * Why a playability status is a verdict on the track rather than on the
+ * client, or null if it isn't. Deliberately no bare "sign in to confirm":
+ * that prefix is shared with the bot-check ("Sign in to confirm you're not
+ * a bot"), and matching it remembered a ten-minute age-gate verdict for
+ * every track asked while the relay's fallback jar was dead — a credential
+ * state wearing a track verdict's clothes.
+ */
+const AGE_GATE = /confirm your age|age-restricted|inappropriate for some users/;
+
+/** YouTube's datacenter refusal — a verdict on the relay's credential, not the track (see the walk below). */
+const BOT_CHECK = /sign in to confirm|not a bot/;
 
 function permanentReason(status: string | undefined, reason: string | undefined, signedIn: boolean): string | null {
   const text = (reason ?? '').toLowerCase();
@@ -241,7 +263,15 @@ export async function resolvePlayer(
         permanent = verdict;
         ageGated ||= AGE_GATE.test(reason.toLowerCase());
       }
-      excludeClient(videoId, client, `${status}: ${reason} (${ms}ms)`, signed);
+      // A bot-check is a verdict on the relay's credential, not on this
+      // client+track pair: while the fallback jar is dead, every client
+      // answers it for every video (private-deployment.md), and a client
+      // sat out for ten minutes would still be sat out after the keeper
+      // rotated the jar back in. Track verdicts keep their exclusion — an
+      // age gate or a region block repeats identically on the next ask.
+      if (verdict || !isRelayMode() || !BOT_CHECK.test(reason.toLowerCase())) {
+        excludeClient(videoId, client, `${status}: ${reason} (${ms}ms)`, signed);
+      }
     } catch (error) {
       lastReason = String(error);
       excludeClient(videoId, client, `request failed: ${String(error)}`, signed);

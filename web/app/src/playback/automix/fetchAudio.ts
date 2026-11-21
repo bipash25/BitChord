@@ -85,9 +85,8 @@ async function resolveAudioUrl(videoId: string, itag?: number): Promise<{ url: U
 
 /**
  * The player's own walk (YouTubeEngine.load): anonymously first, and when
- * YouTube calls that an age gate (which is also how its "sign in to confirm
- * you're not a bot" reads), again as the signed-in user. Without the second
- * step a song that plays fine could never be analysed.
+ * YouTube calls that an age gate, again as the signed-in user. Without the
+ * second step a song that plays fine could never be analysed.
  */
 async function resolveAsPlayerWould(videoId: string) {
   try {
