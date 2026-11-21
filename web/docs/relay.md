@@ -206,8 +206,8 @@ dependencies** (`node:http` + the global `fetch`), vitest for tests,
 
 ```bash
 pnpm --filter @bitchord/relay dev      # tsx-free dev loop, port 8787
-pnpm --filter @bitchord/relay build    # tsc → dist/
-node web/relay/dist/index.mjs         # PORT=8787 RELAY_ALLOWED_ORIGINS=https://bitchord.in,http://localhost:5173
+pnpm --filter @bitchord/relay build    # tsc → dist/index.js (ESM via the package's "type":"module")
+node web/relay/dist/index.js           # PORT=8787 RELAY_ALLOWED_ORIGINS=https://bitchord.in,http://localhost:5173
 ```
 
 The site takes `VITE_RELAY_URL` (Cloudflare Pages env). Nicer than a second
@@ -223,26 +223,46 @@ are the mitigation available in code; measure with the probe before believing a
 deployment works.
 
 **Measured from the dev VPS, 2026-11-21** (AS32097 WholeSale Internet, Kansas
-City; raw curl, no cookies, no PO token):
+City; raw curl, no cookies, no PO token) **and from Cloudflare Workers egress**
+(a one-file probe Worker, three runs, `C:\Users\Administrator\Projects\yt-egress-probe`):
 
-| Call | Answer |
-|---|---|
-| `music/browse` (FEmusic_home, WEB_REMIX) | **OK** — 200, 703 KB of real shelves |
-| `music/search` (WEB_REMIX) | **OK** — 200, 817 KB, real videoIds |
-| `player` (VISIONOS and WEB_REMIX) | **Bot-checked** — 200 but `UNPLAYABLE: "Sign in to confirm you're not a bot"`, no streaming data |
-| `player` with a foreign `Origin` | 403 Google "Sorry… automated queries" page |
-| `Access-Control-Allow-Origin` on youtubei responses | **absent** — a page cannot read InnerTube responses at all, from any network. This is the whole reason a relay (or the extension) must exist |
+| Call | VPS (AS32097) | Cloudflare Workers |
+|---|---|---|
+| `music/browse` (FEmusic_home, WEB_REMIX) | **OK** — 200, 703 KB of real shelves | **OK** — 200, same |
+| `music/search` (WEB_REMIX) | **OK** — 200, 817 KB, real videoIds | **OK** — 200, same |
+| `player` (VISIONOS) | **Bot-checked** — `Sign in to confirm you're not a bot` | **Bot-checked** — identical |
+| `player` (WEB_REMIX, with full Origin/Referer/X-Origin impersonation) | **Bot-checked** — same refusal | same |
+| `player` with a foreign `Origin` | 403 Google "Sorry… automated queries" page | — |
+| `Access-Control-Allow-Origin` on youtubei responses | **absent** — a page cannot read InnerTube responses at all, from any network. This is the whole reason a relay (or the extension) must exist | same |
 
-So from this IP class: browse, search, lyrics and addon JSON all work; only
-`player` — anonymous stream resolution — is refused. The rescue paths, in
-order of confidence: **a signed-in request** (phase 2's OAuth bearer; account
-requests are served from datacenter IPs — NewPipe's daily reality), **a PO
-token minted in the user's real browser** and carried through the relay
-(attestation is designed for exactly this, but see the WebPO open problem in
-`youtube-playback.md`), or **a different egress** (Cloudflare Workers entry
-point; must be probed, never assumed). Treat the relay's egress as swappable:
-it is stateless precisely so the same code can be re-deployed on the VPS, a
-Worker, or both, and re-probed.
+The conclusion this forces: **anonymous `player` is refused from datacenter
+egress, period — Cloudflare's pool gets exactly the treatment a budget VPS
+does.** Egress choice is therefore operational only (edge latency, price,
+maintenance), never a YouTube-trust decision, and a "cleaner" datacenter IP is
+a decaying lottery, not an architecture. Browse, search, lyrics and addon JSON
+work from any of them.
+
+**PO tokens do not rescue it either — measured 2026-11-21.** With
+`bgutil-ytdlp-pot-provider` 2.0.2 minting genuine BotGuard PO tokens on this
+VPS (verified minted, verified attached to the `player` request), five clients
+— tv_samsung, tv, mweb, web_safari, web_music — were all still answered
+`LOGIN_REQUIRED` / "Sign in to confirm you're not a bot" (yt-dlp 2026.10.26,
+`fetch_pot=always`; test harness in `C:\Users\Administrator\Projects\yt-pot-test`).
+The provider's own README documents the general rule this matches: *a PO token
+does not bypass IP-based login restrictions; on datacenter IPs you additionally
+need cookies.* So attestation is dead as an anonymous rescue, and **sign-in is
+the only playback path through any public server**: phase 2's OAuth bearer
+(NewPipe's daily reality), with the caveat that the phase-2 spike must confirm
+the bearer — not cookies — is what datacenter egress is served with.
+
+Two config traps this test surfaced, for anyone re-running it: yt-dlp's player
+PO-token policy is `required=False` on the player request (only GVS tokens are
+`required=True`), so the default `fetch_pot=auto` attaches **no** player token
+and proves nothing; and the provider's extractor arg is now
+`youtubepot-bgutilhttp:base_url=…`, not the older `youtube:getpot_bgutil_baseurl=…`.
+
+Treat the relay's egress as swappable: it is stateless precisely so the same
+code can be re-deployed on the VPS, a Worker, or both, and re-probed.
 
 ## Verification
 

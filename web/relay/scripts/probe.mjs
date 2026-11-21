@@ -151,11 +151,25 @@ async function playerRequest(yt, videoId, client) {
 }
 
 /**
+ * YouTube's datacenter-IP refusal: "Sign in to confirm you're not a bot"
+ * (LOGIN_REQUIRED, occasionally UNPLAYABLE; YouTube sends a curly apostrophe).
+ * Matched against the lowercased reason, as resolver.ts's AGE_GATE does. This
+ * is the one refusal that indicts the relay's egress rather than the relay or
+ * the track, so the walk's failure has to name it — otherwise a probe failure
+ * from a bot-checked IP reads as a client-walk or relay defect, and someone
+ * re-runs the control experiment by hand to find out otherwise (measured
+ * 2026-11-21: all fifteen InnerTube clients, both youtubei hosts, fresh and
+ * absent visitor identities alike are refused from this network's IP).
+ */
+const BOT_CHECK = /sign in to confirm|not a bot/;
+
+/**
  * Walks the clients until one answers OK with direct audio URLs, as
  * resolvePlayer does. No BotGuard: VISIONOS takes no PO token and is first,
  * and the walk says plainly when a client refuses.
  */
 async function resolveTrack(yt, videoId) {
+  let botChecked = false;
   for (const client of CLIENT_ORDER) {
     const started = performance.now();
     try {
@@ -171,10 +185,26 @@ async function resolveTrack(yt, videoId) {
       if (status === 'OK' && formats.length > 0) {
         return { client, info, formats, ms };
       }
-      console.log(`    ${client}: ${status ?? 'no status'} — ${info.playability_status?.reason ?? 'no direct audio URLs'} (${ms}ms)`);
+      const reason = info.playability_status?.reason ?? '';
+      botChecked ||= BOT_CHECK.test(reason.toLowerCase());
+      console.log(`    ${client}: ${status ?? 'no status'} — ${reason || 'no direct audio URLs'} (${ms}ms)`);
     } catch (error) {
       console.log(`    ${client}: request failed — ${String(error?.message ?? error)}`);
     }
+  }
+  if (botChecked) {
+    // The chain itself worked: these answers came through the relay's
+    // impersonation intact, and the same requests are refused identically
+    // without it — and, measured the same day, from Cloudflare Workers egress
+    // too (relay.md's measurement table). Anonymous `player` is what
+    // datacenter-IP reputation is enforced against; relay.md's rescue paths
+    // for playback are a signed-in request (phase 2) or a PO token minted in
+    // a real browser.
+    throw new Error(
+      'every client answered "Sign in to confirm you\'re not a bot": YouTube refuses anonymous playback from this ' +
+        "egress IP, which is a deployment property (relay.md, “Where it runs is a real decision”), not a relay defect. " +
+        'Re-probe from the deployment\'s own egress before trusting playback.',
+    );
   }
   throw new Error('no client answered OK with direct audio URLs (relay mode needs VISIONOS-style URLs)');
 }
