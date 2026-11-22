@@ -4,12 +4,12 @@ import { LogoMark } from '@/components/icons/LogoMark';
 import {
   AlbumsIcon,
   AllPlaylistsIcon,
+  AndroidExploreIcon,
+  AndroidHomeIcon,
+  AndroidSearchIcon,
   ArtistsIcon,
-  HomeIcon,
   MadeForYouIcon,
-  NewIcon,
   RecentlyAddedIcon,
-  SearchIcon,
   SongsIcon,
   type NavIconProps,
 } from '@/components/icons/NavIcons';
@@ -28,9 +28,9 @@ interface NavItem {
 }
 
 const PRIMARY: NavItem[] = [
-  { to: '/search', label: 'Search', Icon: SearchIcon },
-  { to: '/home', label: 'Home', Icon: HomeIcon },
-  { to: '/new', label: 'New', Icon: NewIcon },
+  { to: '/home', label: 'Home', Icon: AndroidHomeIcon },
+  { to: '/new', label: 'Explore', Icon: AndroidExploreIcon },
+  { to: '/search', label: 'Search', Icon: AndroidSearchIcon },
 ];
 
 const LIBRARY_ICONS: Record<Exclude<LibrarySection, 'playlists'>, NavItem['Icon']> = {
@@ -47,14 +47,13 @@ const LIBRARY: NavItem[] = (Object.keys(LIBRARY_ICONS) as (keyof typeof LIBRARY_
   Icon: LIBRARY_ICONS[section],
 }));
 
-// A sidebar row; NavLink sets aria-current on the page's own row.
+// Android-ported rail row: SF Pro type, --bc-tab-pill-bg active fill, 16px outer gutter.
 const item =
-  'group flex h-9 items-center gap-2 mb-0.5 p-1 rounded-nav type-body-reduced text-primary hover:bg-quinary aria-[current=page]:bg-nav-selected';
-// Apple's glyphs, drawn at 24px (their 24-unit box), which the user preferred to Apple's own 28px.
-const icon = 'inline-grid size-6 flex-none place-items-center text-primary group-aria-[current=page]:text-key';
+  'group flex h-9 items-center gap-2.5 mb-0.5 px-2.5 rounded-[12px] font-(family-name:--bc-font-family) text-[14px] leading-none font-normal tracking-(--bc-tracking-body) text-(--bc-on-surface) hover:bg-(--bc-surface-variant) aria-[current=page]:bg-(--bc-tab-pill-bg) aria-[current=page]:font-semibold';
+const icon = 'inline-grid size-6 flex-none place-items-center text-(--bc-on-surface-variant) group-aria-[current=page]:text-(--bc-primary)';
 const navLabel = 'min-w-0 truncate';
-// "Library", "Playlists" (report §1: 12px/15px 600, secondary, padding 4px 8px).
-const sectionHeader = 'mt-4 px-2 py-1 type-callout-emphasized text-secondary';
+const sectionHeader =
+  'mt-4 px-2.5 py-1 font-(family-name:--bc-font-family) text-[11px] leading-tight font-semibold tracking-(--bc-tracking-label-sm) uppercase text-(--bc-on-surface-variant)';
 const list = 'flex flex-col';
 
 function NavList({ items, onNavigate }: { items: NavItem[]; onNavigate: () => void }) {
@@ -130,7 +129,7 @@ function SpotifyNav({ onNavigate }: { onNavigate: () => void }) {
   );
 }
 
-/** The left glass sidebar (report §1). */
+/** The frosted desktop rail (>=1000px) and mobile secondary library drawer (<1000px). */
 export function Sidebar() {
   const drawerOpen = useUi((s) => s.drawerOpen);
   const setDrawerOpen = useUi((s) => s.setDrawerOpen);
@@ -140,36 +139,60 @@ export function Sidebar() {
 
   return (
     <>
-      {/* Below 484px the sidebar is a drawer opened from the top bar's menu button. */}
       <nav
-        className="absolute inset-y-0 left-0 z-(--z-web-chrome) flex w-(--web-navigation-width) flex-col glass-material max-sm:w-[min(300px,82vw)] max-sm:-translate-x-full max-sm:shadow-glass max-sm:transition-transform max-sm:duration-(--duration-panel) max-sm:ease-panel max-sm:data-[open=true]:translate-none"
+        className="bc-frost absolute inset-y-0 left-0 z-(--z-web-chrome) flex w-(--web-navigation-width) flex-col border-0 border-r-[0.5px] border-r-(--bc-glass-edge) max-lg:fixed max-lg:z-[calc(var(--z-web-chrome)+2)] max-lg:w-[min(300px,82vw)] max-lg:-translate-x-full max-lg:shadow-(--bc-shadow-menu) max-lg:transition-transform max-lg:duration-260 max-lg:ease-[cubic-bezier(0.2,0,0,1)] max-lg:data-[open=true]:translate-x-0"
         data-open={drawerOpen}
         aria-label="Main"
       >
-        <div className="mt-2 ml-2 flex h-18 items-center px-5">
-          <PrefetchLink to="/home" className="inline-flex items-center gap-2 rounded-[6px]" aria-label="BitChord, Home" onClick={close}>
-            {/* White on dark, as Apple's own wordmark; it follows the label colour so it stays visible in light. */}
-            <LogoMark size={22} className="text-primary" />
-            <span className="type-[700_19px/24px] tracking-[-0.01em]">BitChord</span>
+        <div className="mt-2 flex h-16 items-center px-(--bc-page-gutter)">
+          <PrefetchLink to="/home" className="inline-flex items-center gap-2 rounded-[8px]" aria-label="BitChord, Home" onClick={close}>
+            <LogoMark size={22} className="text-(--bc-on-surface)" />
+            <span className="font-(family-name:--bc-font-family) text-[20px] leading-tight font-bold tracking-(--bc-tracking-title) text-(--bc-on-surface)">BitChord</span>
           </PrefetchLink>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto pr-3 pl-5 [scrollbar-width:none]">
+        <div className="min-h-0 flex-1 overflow-y-auto px-(--bc-page-gutter) [scrollbar-width:none]">
           <NavList items={PRIMARY} onNavigate={close} />
-          {signedIn && <LibraryNav onNavigate={close} />}
+          {signedIn ? (
+            <LibraryNav onNavigate={close} />
+          ) : (
+            <>
+              <h2 className={sectionHeader}>Library</h2>
+              <ul className={list}>
+                {LIBRARY.map(({ to, label, Icon }) => (
+                  <li key={to}>
+                    <PrefetchNavLink to={to} className={item} onClick={close}>
+                      <Icon size={24} className={icon} />
+                      <span className={navLabel}>{label}</span>
+                    </PrefetchNavLink>
+                  </li>
+                ))}
+                <li>
+                  <PrefetchNavLink to="/library/playlists" className={item} onClick={close}>
+                    <AllPlaylistsIcon size={24} className={icon} />
+                    <span className={navLabel}>{LIBRARY_SECTIONS.playlists.title}</span>
+                  </PrefetchNavLink>
+                </li>
+              </ul>
+            </>
+          )}
           {spotifySignedIn && <SpotifyNav onNavigate={close} />}
         </div>
-        <div className="flex flex-col gap-2 pt-3 pr-3 pb-5 pl-5">
+        <div className="flex flex-col gap-2 px-(--bc-page-gutter) pt-3 pb-5">
           <AccountButton />
-          {/* The site no longer begs for an app install anywhere; the settings
-              link is all that belongs beside the account control. */}
           <div className="flex justify-end">
-            <PrefetchNavLink to="/settings" className="grid size-7 place-items-center rounded-nav text-secondary hover:bg-quinary hover:text-primary aria-[current=page]:bg-quinary aria-[current=page]:text-primary" aria-label="Settings" title="Settings" onClick={close}>
+            <PrefetchNavLink
+              to="/settings"
+              className="grid size-8 place-items-center rounded-[10px] text-(--bc-on-surface-variant) hover:bg-(--bc-surface-variant) hover:text-(--bc-on-surface) aria-[current=page]:bg-(--bc-tab-pill-bg) aria-[current=page]:text-(--bc-on-surface)"
+              aria-label="Settings"
+              title="Settings"
+              onClick={close}
+            >
               <Settings size={17} strokeWidth={1.9} />
             </PrefetchNavLink>
           </div>
         </div>
       </nav>
-      {drawerOpen && <div className="absolute inset-0 z-[calc(var(--z-web-chrome)-1)] hidden bg-scrim max-sm:block" onClick={close} aria-hidden="true" />}
+      {drawerOpen && <div className="fixed inset-0 z-[calc(var(--z-web-chrome)+1)] hidden bg-black/50 max-lg:block" onClick={close} aria-hidden="true" />}
     </>
   );
 }

@@ -4,17 +4,15 @@ import { sizedArtwork } from '@/lib/artwork';
 import { usePlayer } from '@/state/player';
 import { useUi } from '@/state/ui';
 
-const control = 'grid size-10 place-items-center rounded-[6px] text-primary disabled:opacity-40 enabled:active:scale-90 transition-[scale]';
+const control =
+  'grid size-(--bc-miniplayer-glyph-slot) place-items-center rounded-full text-(--bc-on-surface) disabled:opacity-40 enabled:active:scale-90 transition-[scale]';
 
 /**
- * The docked mini player for small screens (relay.md §8): PlayerBar is
- * max-sm:hidden, so a phone has no controls at all without this. Artwork,
- * title, play/pause and next; tapping the track opens the full-screen player,
- * which exists and carries the whole transport. Minimal — it unblocks use
- * over the server relay, where phones land; it is not the mobile redesign.
+ * Android-ported floating mini player pill (MiniPlayer.kt:351-495, spec §3.5).
  *
- * The page's bottom padding already clears it: it was sized for the hidden
- * pill's height and offset, which is more than this bar plus the safe area.
+ * Rides 8px above FloatingTabBar on screens below 1000px (lg:hidden): 56px tall,
+ * 16px side gutters (capped at 440px), 24px frost with 0.5px edge hairline,
+ * 40px art (8px radius), and 32px transport glyphs inside 40px slots.
  */
 export function MobilePlayerBar() {
   const nowPlaying = usePlayer((s) => s.nowPlaying);
@@ -25,51 +23,66 @@ export function MobilePlayerBar() {
   const openFullScreen = useUi((s) => s.setFullScreen);
   const { togglePlay, next } = usePlayer.getState();
 
-  // The phone's only now-playing surface: a load that failed (an age gate, a
-  // SABR-only track over the relay) is said here, not only in the hidden pill.
+  if (!nowPlaying && status !== 'loading' && status !== 'error') return null;
+
   const title = status === 'error' && error ? error : nowPlaying?.title ?? '';
   const artist = status === 'error' && error ? '' : nowPlaying?.artist ?? '';
 
   return (
     <div
-      className="glass-material absolute inset-x-0 bottom-0 z-[calc(var(--z-web-chrome)-1)] hidden max-sm:block pb-[env(safe-area-inset-bottom)]"
+      className="bc-frost bc-pill-squircle fixed left-1/2 z-(--z-web-chrome) h-(--bc-miniplayer-h) w-[min(calc(100vw-2*var(--bc-bar-gutter)),var(--bc-floating-bar-max))] -translate-x-1/2 text-(--bc-glass-content) shadow-(--bc-shadow-glass) lg:hidden"
+      style={{
+        bottom: 'calc(var(--bc-bottom-inset) + var(--bc-tabbar-lift) + var(--bc-tabbar-h) + 8px)',
+      }}
       role="region"
       aria-label="Player"
     >
-      {/* The padding above is the phone's home indicator: outside the bar's
-          height, which stays the full token for the controls. */}
-      <div className="grid h-(--mini-player-height) grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-1 px-3.5">
+      <div className="grid h-full grid-cols-[minmax(0,1fr)_auto] items-center gap-(--bc-miniplayer-transport-gap) px-3 py-2">
         <button
+          type="button"
           className="flex min-w-0 items-center gap-2.5 text-start"
           aria-label="Open full screen player"
           onClick={() => openFullScreen(true)}
         >
-          {nowPlaying?.artworkUrl ? (
-            <img
-              className="size-[34px] flex-none rounded-(--radius-artwork-small) object-cover"
-              src={sizedArtwork(nowPlaying.artworkUrl, 34)}
-              alt=""
-              referrerPolicy="no-referrer"
-              decoding="async"
-            />
-          ) : (
-            <span className="grid size-[34px] flex-none place-items-center rounded-(--radius-artwork-small) bg-joe text-tertiary" aria-hidden="true">
-              <LogoMark size={20} />
-            </span>
-          )}
-          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-            <span className={`truncate ${status === 'error' ? 'type-callout-medium text-key' : 'type-body-emphasized'}`}>
+          <span className="artwork-stroke relative size-(--bc-miniplayer-art) flex-none overflow-hidden rounded-(--bc-radius-art) bg-(--bc-surface-variant)">
+            {nowPlaying?.artworkUrl ? (
+              <img
+                className="size-full object-cover"
+                src={sizedArtwork(nowPlaying.artworkUrl, 40)}
+                alt=""
+                referrerPolicy="no-referrer"
+                decoding="async"
+              />
+            ) : (
+              <span className="grid size-full place-items-center text-(--bc-on-surface-variant)" aria-hidden="true">
+                <LogoMark size={20} />
+              </span>
+            )}
+          </span>
+          <span className="flex min-w-0 flex-1 flex-col">
+            <span
+              className={`truncate font-(family-name:--bc-font-family) text-[16px] leading-[1.25] font-semibold tracking-(--bc-tracking-title-md) ${
+                status === 'error' ? 'text-(--bc-accent-red)' : 'text-(--bc-on-surface)'
+              }`}
+            >
               {title || (status === 'loading' ? 'Loading…' : '')}
             </span>
-            {artist && <span className="truncate type-callout-medium text-secondary">{artist}</span>}
+            {artist && (
+              <span className="truncate font-(family-name:--bc-font-family) text-[14px] leading-[1.25] font-normal tracking-(--bc-tracking-body) text-(--bc-on-surface-variant)">
+                {artist}
+              </span>
+            )}
           </span>
         </button>
-        <button className={control} disabled={!nowPlaying} aria-label={playing ? 'Pause' : 'Play'} onClick={togglePlay}>
-          {playing ? <PauseIcon size={26} /> : <PlayIcon size={26} />}
-        </button>
-        <button className={control} disabled={!nowPlaying || !hasNext} aria-label="Next" onClick={next}>
-          <ForwardIcon size={24} />
-        </button>
+
+        <div className="flex items-center gap-(--bc-miniplayer-transport-gap)">
+          <button type="button" className={control} disabled={!nowPlaying} aria-label={playing ? 'Pause' : 'Play'} onClick={togglePlay}>
+            {playing ? <PauseIcon size={32} /> : <PlayIcon size={32} />}
+          </button>
+          <button type="button" className={control} disabled={!nowPlaying || !hasNext} aria-label="Next" onClick={next}>
+            <ForwardIcon size={28} />
+          </button>
+        </div>
       </div>
     </div>
   );

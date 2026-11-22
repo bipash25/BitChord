@@ -8,6 +8,7 @@ import { useSyncExternalStore } from 'react';
  */
 
 const reducedMotion = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : null;
+const reducedTransparency = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-transparency: reduce)') : null;
 
 /** The system's reduced-motion preference, kept live. */
 export function useReducedMotion(): boolean {
@@ -17,6 +18,17 @@ export function useReducedMotion(): boolean {
       return () => reducedMotion?.removeEventListener('change', onChange);
     },
     () => reducedMotion?.matches ?? false,
+  );
+}
+
+/** The system's reduced-transparency preference, kept live (Android's reduceDynamicBlur contract). */
+export function useReducedTransparency(): boolean {
+  return useSyncExternalStore(
+    (onChange) => {
+      reducedTransparency?.addEventListener('change', onChange);
+      return () => reducedTransparency?.removeEventListener('change', onChange);
+    },
+    () => reducedTransparency?.matches ?? false,
   );
 }
 

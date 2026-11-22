@@ -1,0 +1,255 @@
+/*
+ * Android → Web UI port design tokens (web/docs/android-ui-port-spec.md §2).
+ *
+ * Phase 1 rule: the legacy Apple Music tokens in tokens.css stay intact to
+ * keep untouched inner pages working until Phase 3 retires them. All Android-
+ * ported tokens live under the --bc- prefix: light values on :root first,
+ * dark overrides under prefers-color-scheme: dark.
+ */
+
+/*
+ * SF Pro Display, drawn one weight cut lighter than asked (Theme.kt:51-73):
+ * W400+W500 → Regular, W600 → Medium, W700 → Semibold, W800 → Bold.
+ * Cut to Latin, Greek and Cyrillic; other scripts fall through to system fonts.
+ */
+@font-face {
+  font-family: 'BitChord SF Pro Display';
+  src: url('../assets/fonts/sf-pro-display-regular.woff2') format('woff2');
+  font-weight: 400 500;
+  font-display: block;
+  unicode-range: U+0000-024F, U+0259, U+02B0-036F, U+0370-03FF, U+0400-052F, U+1E00-1EFF, U+2000-206F, U+20A0-20CF,
+    U+2100-214F, U+2190-21FF, U+2212, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'BitChord SF Pro Display';
+  src: url('../assets/fonts/sf-pro-display-medium.woff2') format('woff2');
+  font-weight: 600;
+  font-display: block;
+  unicode-range: U+0000-024F, U+0259, U+02B0-036F, U+0370-03FF, U+0400-052F, U+1E00-1EFF, U+2000-206F, U+20A0-20CF,
+    U+2100-214F, U+2190-21FF, U+2212, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'BitChord SF Pro Display';
+  src: url('../assets/fonts/sf-pro-display-semibold.woff2') format('woff2');
+  font-weight: 700;
+  font-display: block;
+  unicode-range: U+0000-024F, U+0259, U+02B0-036F, U+0370-03FF, U+0400-052F, U+1E00-1EFF, U+2000-206F, U+20A0-20CF,
+    U+2100-214F, U+2190-21FF, U+2212, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'BitChord SF Pro Display';
+  src: url('../assets/fonts/sf-pro-display-bold.woff2') format('woff2');
+  font-weight: 800;
+  font-display: block;
+  unicode-range: U+0000-024F, U+0259, U+02B0-036F, U+0370-03FF, U+0400-052F, U+1E00-1EFF, U+2000-206F, U+20A0-20CF,
+    U+2100-214F, U+2190-21FF, U+2212, U+FEFF, U+FFFD;
+}
+
+:root {
+  /* ---- §2.1 Colour roles (Theme.kt:24, :38-48) ------------------------- */
+  --bc-bg: #ffffff;
+  --bc-surface: #f7f7f9;
+  --bc-surface-variant: #f2f2f7;
+  --bc-on-surface: #000000;
+  --bc-on-surface-variant: #6e6e73;
+  --bc-outline: #e5e5ea;
+  --bc-accent-red: #fa2d48;
+  --bc-primary: #000000;
+  --bc-on-primary: #ffffff;
+
+  /* Fixed menu tokens (IosMenu.kt:103-129) */
+  --bc-menu-fill-dark: #1c1c1e;
+  --bc-menu-rim-dark: rgba(255, 255, 255, 0.1);
+  --bc-menu-label-dark: rgba(255, 255, 255, 0.75);
+  --bc-menu-label2-dark: rgba(255, 255, 255, 0.6);
+  --bc-menu-sep-dark: rgba(255, 255, 255, 0.1);
+  --bc-menu-fill-light: #f6f6f7;
+  --bc-menu-rim-light: rgba(0, 0, 0, 0.06);
+  --bc-menu-label-light: #1a1a1a;
+  --bc-menu-label2-light: rgba(26, 26, 26, 0.55);
+  --bc-menu-sep-light: rgba(0, 0, 0, 0.09);
+
+  /* ---- §2.2 Glass / surface material values --------------------------- */
+  --bc-glass-blur: 8px;
+  --bc-glass-saturate: 1.5;
+  --bc-glass-tint-light: rgba(250, 250, 250, 0.4);
+  --bc-glass-tint-dark: rgba(18, 18, 18, 0.4);
+  --bc-glass-tint: var(--bc-glass-tint-light);
+  --bc-glass-edge: rgba(255, 255, 255, 0.1);
+  --bc-glass-edge-width: 0.5px;
+
+  --bc-frost-blur: 24px;
+  --bc-frost-input-scale: 0.33;
+  --bc-frost-bg: color-mix(in srgb, var(--bc-surface) 55%, transparent);
+  --bc-frost-backdrop: blur(var(--bc-frost-blur)) saturate(var(--bc-menu-frost-saturate));
+  --bc-glass-backdrop: blur(var(--bc-glass-blur)) saturate(var(--bc-glass-saturate));
+  --bc-top-fade-backdrop: blur(var(--bc-frost-blur));
+
+  --bc-menu-frost-fill: rgba(28, 28, 30, 0.8);
+  --bc-menu-frost-blur: 24px;
+  --bc-menu-frost-saturate: 1.8;
+
+  --bc-indicator-alpha: 0.5;
+  /* FloatingBottomBar.kt:287 — primary.copy(alpha = 0.14f) */
+  --bc-tab-pill-bg: rgba(0, 0, 0, 0.14);
+  --bc-glass-content-light: #000000;
+  --bc-glass-content-dark: #ffffff;
+  --bc-glass-content: var(--bc-glass-content-light);
+  --bc-tab-unselected-alpha: 0.65;
+
+  /* ---- §2.3 Corner radii ---------------------------------------------- */
+  --bc-radius-smooth: 0.607;
+  --bc-radius-menu: 30px;
+  --bc-radius-alert: 14px;
+  --bc-radius-drawer: 26px;
+  --bc-radius-group: 14px;
+  --bc-radius-row-press: 16px;
+  --bc-radius-art: 8px;
+  --bc-radius-sleeve: 12px;
+  --bc-radius-pill-art: 5.7px;
+  --bc-radius-held-card: 20px;
+  --bc-radius-mood-card: 18px;
+  --bc-radius-mood-art: 22px;
+  --bc-radius-field: 11px;
+  --bc-radius-signin: 22px;
+  --bc-radius-pill: 9999px;
+
+  /* ---- §2.4 Typography (Theme.kt:84-93) ------------------------------- */
+  --bc-font-family: 'BitChord SF Pro Display', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+
+  --bc-type-display: 800 34px / 1.15 var(--bc-font-family);
+  --bc-tracking-display: -0.5px;
+  --bc-type-headline-lg: 800 30px / 1.2 var(--bc-font-family);
+  --bc-tracking-headline-lg: -0.4px;
+  --bc-type-headline: 700 22px / 1.25 var(--bc-font-family);
+  --bc-tracking-headline: -0.25px;
+  --bc-type-title: 700 20px / 1.25 var(--bc-font-family);
+  --bc-tracking-title: -0.2px;
+  --bc-type-title-md: 600 16px / 1.3 var(--bc-font-family);
+  --bc-tracking-title-md: 0.05px;
+  --bc-type-body-lg: 400 16px / 1.35 var(--bc-font-family);
+  --bc-tracking-body-lg: 0.2px;
+  --bc-type-body: 400 14px / 1.35 var(--bc-font-family);
+  --bc-tracking-body: 0.3px;
+  --bc-type-label: 600 12px / 1.25 var(--bc-font-family);
+  --bc-tracking-label: 0.25px;
+  --bc-type-label-sm: 600 11px / 1.25 var(--bc-font-family);
+  --bc-tracking-label-sm: 0.3px;
+
+  /* Out-of-scale recurring sizes */
+  --bc-type-tab-label: 600 10px / 1 var(--bc-font-family);
+  --bc-tracking-tab-label: 0.5px;
+  --bc-type-accessory-title: 700 13px / 1.2 var(--bc-font-family);
+  --bc-tracking-accessory-title: 0.15px;
+  --bc-type-accessory-artist: 400 12px / 1.2 var(--bc-font-family);
+  --bc-tracking-accessory-artist: 0.35px;
+
+  /* ---- §2.5 Layout & dimensions --------------------------------------- */
+  --bc-page-gutter: 16px;
+  --bc-bar-gutter: 16px;
+  --bc-topbar-h: 52px;
+  --bc-topbar-gap: 12px;
+  --bc-top-control: 44px;
+  --bc-action-gap: 10px;
+  --bc-avatar: 28px;
+  --bc-tabbar-h: 62px;
+  --bc-tabbar-gutter: 19px;
+  --bc-tabbar-lift: 6px;
+  --bc-tabbar-gesture-floor: 15px;
+  --bc-pill-inset: 4px;
+  --bc-tab-vpad: 6.5px;
+  --bc-tab-icon: 28px;
+  --bc-tab-gap: 6px;
+  --bc-tab-icon-label-gap: 1px;
+  --bc-inline-bar-h: 48px;
+  --bc-inline-gutter: 28px;
+  --bc-inline-spacing: 14px;
+  --bc-miniplayer-h: 56px;
+  --bc-miniplayer-radius: 28px;
+  --bc-miniplayer-glyph: 32px;
+  --bc-miniplayer-glyph-slot: 40px;
+  --bc-miniplayer-art: 40px;
+  --bc-miniplayer-transport-gap: 8px;
+  --bc-floating-bar-max: 440px;
+  --bc-player-gutter: 30px;
+  --bc-player-max: 560px;
+  --bc-player-landscape-min: 560px;
+  --bc-player-tablet-min: 700px;
+  --bc-player-thumb: 54px;
+  --bc-player-header: 60px;
+  --bc-player-art-title-gap: 20px;
+  --bc-skip-icon: 53px;
+  --bc-bottom-action: 44px;
+  --bc-bottom-tile: 35px;
+  --bc-segment-width: 64px;
+  --bc-scrubber-lift: 9px;
+  --bc-volume-row-h: 32px;
+  --bc-queue-divider-inset: 84px;
+  --bc-track-number-w: 24px;
+  --bc-shelf-card-w: 150px;
+  --bc-track-column-max: 400px;
+  --bc-alert-w: 270px;
+  --bc-alert-action-h: 44px;
+  --bc-menu-w: 256px;
+  --bc-drawer-max-w: 640px;
+  --bc-drawer-max-h: 560px;
+  --bc-group-inset: 16px;
+  --bc-fullbleed-max: 62%;
+  --bc-artist-play: 70px;
+  --bc-top-release-corner: 24px;
+
+  /* Safe bottom floor matching Android's floatingBarInsets (FloatingBottomBar.kt:103). */
+  --bc-bottom-inset: max(env(safe-area-inset-bottom, 0px), var(--bc-tabbar-gesture-floor));
+
+  /* ---- §2.6 Elevation / shadow ---------------------------------------- */
+  --bc-shadow-glass: 0 4px 24px rgba(0, 0, 0, 0.1);
+  --bc-shadow-menu: 0 8px 24px rgba(0, 0, 0, 0.3);
+  --bc-shadow-held-card: 0 6px 20px rgba(0, 0, 0, 0.3);
+  --bc-shadow-pill: 0 2px 12px rgba(0, 0, 0, 0.3);
+  --bc-shadow-thumb-switch: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --bc-shadow-sleeve: 0 6px 18px rgba(0, 0, 0, 0.22);
+  --bc-shadow-refresh-puck: 0 2px 6px rgba(0, 0, 0, 0.18);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bc-bg: #000000;
+    --bc-surface: #0d0d0f;
+    --bc-surface-variant: #1c1c1e;
+    --bc-on-surface: #ffffff;
+    --bc-on-surface-variant: #8e8e93;
+    --bc-outline: #2c2c2e;
+    --bc-primary: #ffffff;
+    --bc-on-primary: #000000;
+
+    --bc-glass-tint: var(--bc-glass-tint-dark);
+    --bc-indicator-alpha: 0.14;
+    --bc-tab-pill-bg: rgba(255, 255, 255, 0.14);
+    --bc-glass-content: var(--bc-glass-content-dark);
+  }
+}
+
+/*
+ * Reduced dynamic blur contract (§7.5): drop backdrop-filter and fill
+ * surfaces opaque with --bc-surface while preserving the 0.5px hairline.
+ */
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --bc-frost-bg: var(--bc-surface);
+    --bc-glass-tint: var(--bc-surface);
+    --bc-frost-backdrop: none;
+    --bc-glass-backdrop: none;
+    --bc-top-fade-backdrop: none;
+  }
+}
+
+[data-reduced-blur='true'] {
+  --bc-frost-bg: var(--bc-surface);
+  --bc-glass-tint: var(--bc-surface);
+  --bc-frost-backdrop: none;
+  --bc-glass-backdrop: none;
+  --bc-top-fade-backdrop: none;
+}

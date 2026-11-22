@@ -6,6 +6,43 @@ import type { SVGProps } from 'react';
 
 export type NavIconProps = Omit<SVGProps<SVGSVGElement>, 'children'> & { size?: number };
 
+/*
+ * Android floating tab-bar glyphs (BitChordIcons.kt:122-196): filled-and-
+ * round-stroked Home plus the 512-unit cupertino-outlines Explore, Library,
+ * and Search shapes.
+ */
+export function AndroidHomeIcon({ size = 28, ...props }: NavIconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...props}>
+      <path d="M12 4.05L19.75 11.35V19.65H14.95V15.6H9.05V19.65H4.25V11.35Z" />
+    </svg>
+  );
+}
+
+export function AndroidExploreIcon({ size = 28, ...props }: NavIconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 512 512" fill="currentColor" aria-hidden="true" {...props}>
+      <path d="M99.5 230.24Q58.5 230.24 58.5 188.24V93.24Q58.5 51.24 99.5 51.24H197.5Q238.5 51.24 238.5 93.24V188.24Q238.5 230.24 197.5 230.24ZM314.5 230.24Q273.5 230.24 273.5 188.24V93.24Q273.5 51.24 314.5 51.24H412.5Q453.5 51.24 453.5 93.24V188.24Q453.5 230.24 412.5 230.24ZM99.5 445.24Q58.5 445.24 58.5 403.24V307.24Q58.5 266.24 99.5 266.24H197.5Q238.5 266.24 238.5 307.24V403.24Q238.5 445.24 197.5 445.24ZM314.5 445.24Q273.5 445.24 273.5 403.24V307.24Q273.5 266.24 314.5 266.24H412.5Q453.5 266.24 453.5 307.24V403.24Q453.5 445.24 412.5 445.24Z" />
+    </svg>
+  );
+}
+
+export function AndroidLibraryIcon({ size = 28, ...props }: NavIconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 512 512" fill="currentColor" aria-hidden="true" {...props}>
+      <path d="M154 27.24Q156 0.24 185 0.24H322Q352 0.24 353 27.24ZM116 87.24Q121 56.24 150 56.24H356Q385 56.24 390 87.24ZM133 500.24Q66 500.24 66 434.24V187.24Q66 121.24 133 121.24H378Q446 121.24 446 187.24V434.24Q446 500.24 385 500.24Z" />
+    </svg>
+  );
+}
+
+export function AndroidSearchIcon({ size = 28, ...props }: NavIconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 512 512" fill="currentColor" aria-hidden="true" {...props}>
+      <path d="M219 374.24Q151 374.24 102.5 325.74Q54 277.24 54 209.24Q54 141.24 102.5 92.74Q151 44.24 219 44.24Q287 44.24 335.5 92.74Q384 141.24 384 209.24Q384 264.24 350 309.24L451 410.24Q458 417.24 458 427.24Q458 438.24 451 445.24Q444 452.24 434 452.24Q423 452.24 416 445.24L315 343.24Q271 374.24 219 374.24ZM128 300.24Q166 338.24 219 338.24Q272 338.24 310 300.24Q348 262.24 348 209.24Q348 156.24 310 118.24Q272 80.24 219 80.24Q166 80.24 128 118.24Q90 156.24 90 209.24Q90 262.24 128 300.24Z" />
+    </svg>
+  );
+}
+
 function make(paths: { d: string; fillOpacity?: number; transform?: string }[]) {
   return function NavIcon({ size = 28, ...props }: NavIconProps) {
     return (

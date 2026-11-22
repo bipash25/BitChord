@@ -13,9 +13,13 @@ export function usePageTint(color: ArtworkColor | null) {
     if (!page || !color) return;
     page.style.setProperty('--page-tint', color.background);
     page.dataset.tint = color.dark ? 'dark' : 'light';
+    // Sibling shell chrome (BottomFadeScrim) sits outside #scrollable-page so it
+    // reads --bc-page-color from the shared shell container.
+    page.parentElement?.style.setProperty('--bc-page-color', color.background);
     return () => {
       page.style.removeProperty('--page-tint');
       delete page.dataset.tint;
+      page.parentElement?.style.removeProperty('--bc-page-color');
     };
   }, [color]);
 }

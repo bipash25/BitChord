@@ -5,9 +5,11 @@ import { startHistoryReporting } from '@/playback/historyReporting';
 import { startLivePresence } from '@/playback/livePresence';
 import { Outlet } from 'react-router';
 import { useExtension } from '@/extension/useExtension';
+import { usePlayer } from '@/state/player';
 import { useUi } from '@/state/ui';
 import { useKeyboardShortcuts } from './useKeyboardShortcuts';
 import { Banner, bannerButtonClass } from './Banner';
+import { FloatingTabBar } from './FloatingTabBar';
 import { MobilePlayerBar } from './MobilePlayerBar';
 import { MobileTopBar } from './MobileTopBar';
 import { PlayerBar } from './PlayerBar';
@@ -18,8 +20,9 @@ import { Sidebar } from './Sidebar';
 const FullScreenPlayer = lazy(() => import('./FullScreenPlayer').then((m) => ({ default: m.FullScreenPlayer })));
 
 /**
- * The app frame (report §1): glass sidebar, the scrolling page, the floating
- * player pill, the side panel, and the bottom band when there is one.
+ * The app frame: desktop frosted rail + floating pill above 1000px, and
+ * Android-ported floating top controls, bottom scrim, mini player pill and
+ * floating tab bar below 1000px.
  */
 export function AppShell() {
   useKeyboardShortcuts();
@@ -36,6 +39,7 @@ export function AppShell() {
   const bannerDismissed = useUi((s) => s.installBannerDismissed);
   const dismissBanner = useUi((s) => s.dismissInstallBanner);
   const fullScreen = useUi((s) => s.fullScreen);
+  const hasMiniPlayer = usePlayer((s) => Boolean(s.nowPlaying) || s.status === 'loading' || s.status === 'error');
 
   let banner = null;
   // The banner is for visitors who can't play at all: the relay wasn't
@@ -57,25 +61,42 @@ export function AppShell() {
     );
   }
 
+  const scrimHeight = hasMiniPlayer
+    ? 'calc(var(--bc-bottom-inset) + 254px)'
+    : 'calc(var(--bc-bottom-inset) + 180px)';
+  const tapGuardHeight = hasMiniPlayer
+    ? 'calc(var(--bc-bottom-inset) + var(--bc-tabbar-lift) + var(--bc-tabbar-h) + 8px + var(--bc-miniplayer-h) + 8px)'
+    : 'calc(var(--bc-bottom-inset) + var(--bc-tabbar-lift) + var(--bc-tabbar-h) + 8px)';
+
   return (
     <div className="grid h-full grid-rows-[minmax(0,1fr)_auto]">
       {/* The side panel slides in from beyond the right edge; never let it scroll the page. */}
       <div className="relative min-h-0 overflow-hidden">
         <Sidebar />
         <MobileTopBar />
-        {/* The page scrolls under the fixed sidebar and the floating player. */}
+        {/* The page scrolls under the fixed sidebar and floating bars. */}
         <main
           id="scrollable-page"
-          className="absolute inset-0 overflow-x-hidden overflow-y-auto pl-(--web-navigation-width) [scrollbar-gutter:stable] data-tint:bg-(--page-tint) data-tint:transition-[background-color] data-tint:duration-300 data-tint:ease-in max-sm:pt-(--mobile-top-bar-height) max-sm:pl-0"
+          className="absolute inset-0 overflow-x-hidden overflow-y-auto bg-(--bc-bg) pl-(--web-navigation-width) [scrollbar-gutter:stable] data-tint:bg-(--page-tint) data-tint:transition-[background-color] data-tint:duration-300 data-tint:ease-in max-lg:pt-[calc(env(safe-area-inset-top,0px)+var(--bc-topbar-h))] max-lg:pl-0"
         >
-          {/* Clears the floating pill: its height, its offset, and some air. */}
-          <div className="min-h-full pb-[calc(var(--player-pill-height)+var(--player-bottom-offset)+40px)]">
+          <div className="min-h-full pb-[calc(var(--player-pill-height)+var(--player-bottom-offset)+40px)] max-lg:pb-[calc(var(--bc-bottom-inset)+var(--bc-tabbar-lift)+var(--bc-tabbar-h)+var(--bc-miniplayer-h)+32px)]">
             <Outlet />
           </div>
         </main>
+        {/* Bottom fade scrim + tap guard (BottomFadeScrim.kt): flat colour ramp + 8px dead strip above floating bars. */}
+        <div
+          className="bc-bottom-scrim pointer-events-none fixed inset-x-0 bottom-0 z-[calc(var(--z-web-chrome)-3)] lg:hidden"
+          style={{ height: scrimHeight }}
+          aria-hidden="true"
+        />
+        <div
+          className="pointer-events-auto fixed inset-x-0 bottom-0 z-[calc(var(--z-web-chrome)-2)] touch-none lg:hidden"
+          style={{ height: tapGuardHeight }}
+          aria-hidden="true"
+        />
         <PlayerBar />
-        {/* Phones get this instead of the max-sm:hidden pill (relay.md §8). */}
         <MobilePlayerBar />
+        <FloatingTabBar />
         <SidePanel />
       </div>
       {banner}
