@@ -3,12 +3,6 @@ import { PageHeader } from '@/components/PageHeader';
 import { useTrackLog } from '@/playback/trackLog';
 import { usePlayer } from '@/state/player';
 
-/**
- * The phase 3 acceptance set (build prompt §11: old, new, regional, explicit
- * and age-restricted tracks). Ids are YouTube Music's first song result for
- * each query, taken 2026-10-15; the last two are the age-gated videos
- * yt-dlp's own tests use.
- */
 export const TEST_TRACKS: { id: string; label: string }[] = [
   { id: 'ZEcqHA7dbwM', label: 'Frank Sinatra · Fly Me To The Moon (1964)' },
   { id: 'xUNqsfFUwhY', label: 'The Beatles · Here Comes The Sun (1969)' },
@@ -32,7 +26,6 @@ export const TEST_TRACKS: { id: string; label: string }[] = [
   { id: 'HtVdAasjOgU', label: 'Age-restricted: The Witcher 3 trailer' },
 ];
 
-/** A videoId out of whatever was pasted: an id, a watch URL, a youtu.be or music.youtube.com link. */
 export function parseVideoId(input: string): string | null {
   const text = input.trim();
   if (/^[\w-]{11}$/.test(text)) return text;
@@ -45,9 +38,8 @@ export function parseVideoId(input: string): string | null {
   }
 }
 
-const sectionHeader = 'mt-7 mb-2 type-subhead-emphasized uppercase text-secondary';
+const sectionHeader = 'mt-7 mb-2 bc-type-label-sm uppercase text-(--bc-on-surface-variant)';
 
-/** The web equivalent of the app's track log viewer, plus a way to play anything. */
 export default function DebugPage() {
   const [input, setInput] = useState('');
   const [filter, setFilter] = useState<'all' | 'current'>('current');
@@ -68,7 +60,7 @@ export default function DebugPage() {
   return (
     <>
       <PageHeader title="Debug" />
-      <div className="mx-(--body-gutter) mt-5 max-w-[980px]">
+      <div className="mx-(--bc-page-gutter) mt-5 max-w-[980px]">
         <form
           className="flex gap-2.5"
           onSubmit={(e) => {
@@ -77,29 +69,35 @@ export default function DebugPage() {
           }}
         >
           <input
-            className="h-9 flex-1 rounded-[10px] border-0 bg-quinary px-3.5 type-title-3"
+            className="h-10 flex-1 rounded-(--bc-radius-field) border-0 bg-(--bc-surface-variant) px-3.5 font-(family-name:--bc-font-family) text-[15px] text-(--bc-on-surface) placeholder:text-(--bc-on-surface-variant)"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Video id or YouTube link"
             aria-label="Video id or YouTube link"
           />
-          <button className="h-9 rounded-pill bg-key-bg px-[18px] type-title-3-emphasized text-white disabled:opacity-40" type="submit" disabled={!id}>
+          <button
+            className="h-10 rounded-full bg-(--bc-primary) px-5 bc-type-title-md text-(--bc-on-primary) disabled:opacity-40"
+            type="submit"
+            disabled={!id}
+          >
             Play
           </button>
         </form>
-        {nowPlaying?.streamInfo && <p className="mt-2 type-callout text-secondary">{nowPlaying.streamInfo}</p>}
+        {nowPlaying?.streamInfo && (
+          <p className="mt-2 bc-type-body text-(--bc-on-surface-variant)">{nowPlaying.streamInfo}</p>
+        )}
 
         <h2 className={sectionHeader}>Test tracks</h2>
         <ul className="grid grid-cols-[repeat(auto-fill,minmax(320px,1fr))] gap-x-5 gap-y-0.5">
           {TEST_TRACKS.map((t) => (
             <li key={t.id}>
               <button
-                className="flex w-full justify-between gap-3 rounded-row px-2.5 py-[7px] text-left type-body hover:bg-tracklist-hover data-[current=true]:text-key"
+                className="flex w-full justify-between gap-3 rounded-[10px] px-2.5 py-2 text-left bc-type-body text-(--bc-on-surface) hover:bg-(--bc-hover-fill) data-[current=true]:bg-(--bc-tab-pill-bg) data-[current=true]:font-semibold"
                 data-current={nowPlaying?.videoId === t.id}
                 onClick={() => void playVideo(t.id)}
               >
                 <span>{t.label}</span>
-                <code className="type-callout text-tertiary">{t.id}</code>
+                <code className="bc-type-label text-(--bc-on-surface-variant)">{t.id}</code>
               </button>
             </li>
           ))}
@@ -107,7 +105,7 @@ export default function DebugPage() {
 
         <div className="flex items-baseline justify-between">
           <h2 className={sectionHeader}>Track log</h2>
-          <div className="flex gap-4 type-body text-key">
+          <div className="flex gap-4 bc-type-label text-(--bc-primary)">
             <button onClick={() => setFilter(filter === 'all' ? 'current' : 'all')}>
               {filter === 'all' ? 'Show current track' : 'Show everything'}
             </button>
@@ -115,17 +113,19 @@ export default function DebugPage() {
           </div>
         </div>
         <ol
-          className="max-h-[420px] overflow-auto rounded-[10px] bg-quinary px-3 py-2.5 [font:400_12px/18px_ui-monospace,Menlo,Consolas,monospace]"
+          className="max-h-[420px] overflow-auto rounded-(--bc-radius-group) bg-(--bc-surface-variant) px-3 py-2.5 [font:400_12px/18px_ui-monospace,Menlo,Consolas,monospace]"
           data-testid="track-log"
         >
           {shown.map((line) => (
             <li
               key={line.id}
-              className="flex gap-2.5 data-[level=debug]:text-secondary data-[level=error]:text-red data-[level=warn]:text-[#d29a00]"
+              className="flex gap-2.5 text-(--bc-on-surface) data-[level=debug]:text-(--bc-on-surface-variant) data-[level=error]:text-(--bc-accent-red) data-[level=warn]:text-[#d29a00]"
               data-level={line.level}
             >
-              <span className="min-w-14 shrink-0 text-right text-tertiary">{(line.t / 1000).toFixed(2)}</span>
-              {line.about && <span className="shrink-0 text-tertiary">{line.about}</span>}
+              <span className="min-w-14 shrink-0 text-right text-(--bc-on-surface-variant)">
+                {(line.t / 1000).toFixed(2)}
+              </span>
+              {line.about && <span className="shrink-0 text-(--bc-on-surface-variant)">{line.about}</span>}
               <span>{line.message}</span>
             </li>
           ))}

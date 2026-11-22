@@ -8,9 +8,9 @@ import { browseHref } from './links';
 import { CircleLockup, SquareLockup, TrackLockup, VideoLockup } from './Lockups';
 import { playList } from './play';
 
-// Arrow buttons (report §2): 28×52 glass pills, only ≥1000px, shown on shelf hover.
+// Desktop hover arrows (≥1000px): frosted pills using --bc-frost.
 const arrow =
-  'absolute top-1/2 z-3 hidden h-13 w-7 -translate-y-1/2 place-items-center rounded-pill bg-thin-material text-secondary opacity-0 transition-[opacity,background-color,color] duration-(--duration-arrow) ease-linear [backdrop-filter:saturate(180%)_blur(60px)] hover:text-primary disabled:pointer-events-none lg:grid lg:enabled:group-hover/shelf:opacity-100';
+  'bc-frost absolute top-1/2 z-3 hidden h-13 w-7 -translate-y-1/2 place-items-center rounded-full text-(--bc-glass-content) opacity-0 shadow-(--bc-shadow-glass) transition-opacity duration-200 ease-linear hover:opacity-100 disabled:pointer-events-none lg:grid lg:enabled:group-hover/shelf:opacity-100';
 
 function renderItem(shelf: Shelf, item: MusicItem): ReactNode {
   switch (shelf.layout) {
@@ -25,10 +25,6 @@ function renderItem(shelf: Shelf, item: MusicItem): ReactNode {
   }
 }
 
-/**
- * A shelf's scrolling row with Apple's hover arrows (report §2), around any
- * list items: the shelves below, and the artist page's Top Songs.
- */
 export function ShelfScroller({ kind, children }: { kind: ShelfKind; children: ReactNode }) {
   const list = useRef<HTMLUListElement>(null);
   const [edges, setEdges] = useState({ start: true, end: true });
@@ -48,7 +44,6 @@ export function ShelfScroller({ kind, children }: { kind: ShelfKind; children: R
     return () => observer.disconnect();
   }, [measure]);
 
-  /** Pages by one viewport of columns, as Apple's arrows do. */
   const page = (direction: 1 | -1) => {
     const el = list.current;
     if (!el) return;
@@ -81,20 +76,19 @@ export function ShelfScroller({ kind, children }: { kind: ShelfKind; children: R
   );
 }
 
-/** A shelf's title, a link with a chevron when there's a page behind it. */
+/** Section heading (`DetailScreen.kt:2000-2034`, `HomeScreen.kt:515-553`): 22px Semibold + optional Show All. */
 function ShelfTitle({ title, to }: { title: string; to?: string | null }) {
   return (
     <div className={shelfHeader}>
-      <h2 className="type-title-2-emphasized">
-        {to ? (
-          <PrefetchLink to={to} className="group/title inline-flex items-center gap-0.5">
-            {title}
-            <ChevronRight size={18} strokeWidth={2.6} className="text-secondary group-hover/title:text-primary" />
-          </PrefetchLink>
-        ) : (
-          title
-        )}
-      </h2>
+      <h2 className="min-w-0 truncate bc-type-headline text-(--bc-page-on,var(--bc-on-surface))">{title}</h2>
+      {to && (
+        <PrefetchLink
+          to={to}
+          className="shrink-0 py-1 pl-3 bc-type-body font-semibold text-(--bc-page-accent,var(--bc-primary)) hover:underline"
+        >
+          Show all
+        </PrefetchLink>
+      )}
     </div>
   );
 }
@@ -112,17 +106,23 @@ export const trackItem = (track: Track): MusicItem => ({
   explicit: track.explicit,
 });
 
-/**
- * Songs in four rows, as the phone's Top Songs and Recently Played: any one
- * plays the whole shelf from there.
- */
-export function TrackShelf({ title, to, tracks, source }: { title: string; to?: string | null; tracks: Track[]; source: QueueSource }) {
+export function TrackShelf({
+  title,
+  to,
+  tracks,
+  source,
+}: {
+  title: string;
+  to?: string | null;
+  tracks: Track[];
+  source: QueueSource;
+}) {
   return (
     <section className={shelfSection} aria-label={title}>
       <ShelfTitle title={title} to={to} />
       <ShelfScroller key={tracks.length} kind="tracks">
         {tracks.map((track, i) => (
-          <li key={track.videoId}>
+          <li key={`${track.videoId}-${i}`}>
             <TrackLockup item={trackItem(track)} onPlay={() => playList(tracks, i, { source })} />
           </li>
         ))}
@@ -131,7 +131,6 @@ export function TrackShelf({ title, to, tracks, source }: { title: string; to?: 
   );
 }
 
-/** A titled horizontal shelf (report §2): grid columns per breakpoint, scroll-snap, hover arrows. */
 export function ShelfView({ shelf }: { shelf: Shelf }) {
   return (
     <section className={shelfSection} aria-label={shelf.title}>
@@ -145,7 +144,6 @@ export function ShelfView({ shelf }: { shelf: Shelf }) {
   );
 }
 
-/** Shelves in order, each its own section. */
 export function Shelves({ shelves }: { shelves: Shelf[] }) {
   return (
     <>

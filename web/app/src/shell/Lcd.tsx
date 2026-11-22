@@ -90,17 +90,14 @@ export function Credits({
   );
 }
 
-// As wide as the name, so only the name opens the album.
-const titleClass = 'min-w-0 max-w-full self-start truncate type-body-emphasized';
+const titleClass = 'min-w-0 max-w-full self-start truncate font-(family-name:--bc-font-family) text-[13px] leading-[1.2] font-bold tracking-(--bc-tracking-accessory-title) text-(--bc-on-surface)';
 
-/** The now-playing tile inside the pill (report §1, "LCD"). */
 export function Lcd() {
   const nowPlaying = usePlayer((s) => s.nowPlaying);
   const status = usePlayer((s) => s.status);
   const error = usePlayer((s) => s.error);
   const openFullScreen = useUi((s) => s.setFullScreen);
   const sheet = usePlayerSheet();
-  // The queue's row for what's playing: it carries the album and each artist's channel.
   const track = usePlayer((s) => {
     const entry = s.queue[s.index]?.track;
     return entry && entry.videoId === s.nowPlaying?.videoId ? entry : null;
@@ -109,7 +106,7 @@ export function Lcd() {
 
   if (!nowPlaying) {
     return (
-      <div className="grid h-full place-items-center text-tertiary">
+      <div className="grid h-full place-items-center text-(--bc-on-surface-variant)">
         <LogoMark size={26} />
       </div>
     );
@@ -119,12 +116,10 @@ export function Lcd() {
   const album = track?.album ?? null;
   return (
     <div
-      className={`group/lcd relative grid h-full items-center gap-x-2 pb-1.5 ${video ? 'grid-cols-[60px_minmax(0,1fr)]' : 'grid-cols-[34px_minmax(0,1fr)]'}`}
+      className={`group/lcd relative grid h-full items-center gap-x-2 pb-1.5 ${video ? 'grid-cols-[60px_minmax(0,1fr)]' : 'grid-cols-[36px_minmax(0,1fr)]'}`}
     >
-      {/* As Apple's: the artwork opens the full-screen player, with an expand glyph on hover. */}
       <button
-        // A music video plays here in small, at 16:9.
-        className={`group/art relative block h-[34px] overflow-hidden rounded-[6px] bg-joe p-0 transition-[filter,opacity] ${video ? 'w-[60px] bg-black' : 'w-[34px]'}`}
+        className={`group/art relative block h-9 overflow-hidden rounded-(--bc-radius-art) bg-(--bc-surface-variant) p-0 transition-[filter,opacity] ${video ? 'w-[60px] bg-black' : 'w-9'}`}
         aria-label="Open full screen player"
         onClick={() => (sheet ? sheet.open() : openFullScreen(true))}
       >
@@ -168,9 +163,11 @@ export function Lcd() {
           <span className={titleClass}>{status === 'loading' ? 'Loading…' : ''}</span>
         )}
         {status === 'error' ? (
-          <span className="truncate type-callout-medium text-key">{error}</span>
+          <span className="truncate font-(family-name:--bc-font-family) text-[12px] leading-[1.2] tracking-(--bc-tracking-accessory-artist) text-(--bc-accent-red)">
+            {error}
+          </span>
         ) : (
-          <span className="truncate type-callout-medium text-secondary">
+          <span className="truncate font-(family-name:--bc-font-family) text-[12px] leading-[1.2] tracking-(--bc-tracking-accessory-artist) text-(--bc-on-surface-variant)">
             {artist ? <Credits videoId={videoId} line={artist} artists={track?.artists ?? []} /> : status === 'loading' ? 'Loading…' : ''}
           </span>
         )}
@@ -180,18 +177,12 @@ export function Lcd() {
   );
 }
 
-// Elapsed and remaining, over the line's two ends while the pointer is on it.
 const time =
-  'pointer-events-none absolute bottom-[11px] type-[600_11px/13px] tabular-nums text-primary opacity-0 transition-opacity group-hover/scrub:opacity-100 group-data-dragging/scrub:opacity-100';
+  'pointer-events-none absolute bottom-[11px] bc-type-label-sm tabular-nums text-(--bc-on-surface) opacity-0 transition-opacity group-hover/scrub:opacity-100 group-data-dragging/scrub:opacity-100';
 
-/**
- * Elapsed time as a 2px line along the LCD's bottom (report §1). Hovering
- * shows the times; pressing or dragging on the line seeks.
- */
 function Progress() {
   const { bar, elapsed, remaining, dragging, handlers } = useScrubber();
   return (
-    // The hit area: taller than the 2px line it carries.
     <div
       className="group/scrub absolute inset-x-0 bottom-0 h-3.5 cursor-pointer touch-none"
       data-scrubber
@@ -201,11 +192,11 @@ function Progress() {
       <span ref={elapsed} className={`${time} left-0`} />
       <span ref={remaining} className={`${time} right-0`} />
       <div
-        className="absolute inset-x-0 bottom-1.5 h-0.5 overflow-hidden rounded-[1px] bg-quaternary transition-[height,left,right] duration-100 ease-in group-hover/scrub:bottom-[5px] group-hover/scrub:h-1 group-data-dragging/scrub:bottom-[5px] group-data-dragging/scrub:h-1"
+        className="absolute inset-x-0 bottom-1.5 h-0.5 overflow-hidden rounded-full bg-(--bc-outline) transition-[height,left,right] duration-100 ease-in group-hover/scrub:bottom-[5px] group-hover/scrub:h-1 group-data-dragging/scrub:bottom-[5px] group-data-dragging/scrub:h-1"
         aria-hidden="true"
       >
         <MixWindowHighlight />
-        <div ref={bar} className="relative size-full origin-left scale-x-(--progress) bg-secondary [--progress:0]" />
+        <div ref={bar} className="relative size-full origin-left scale-x-(--progress) bg-(--bc-on-surface-variant) [--progress:0]" />
       </div>
     </div>
   );

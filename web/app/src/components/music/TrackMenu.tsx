@@ -1,5 +1,5 @@
-import { ChevronLeft, ChevronRight, ListEnd, ListPlus, ListStart, MoreHorizontal, Star } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { ChevronLeft, ChevronRight, ListEnd, ListPlus, ListStart, MoreVertical, Star } from 'lucide-react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Menu, MenuHeader, MenuItem, MenuSeparator, type MenuPlacement } from '@/components/Menu';
 import {
   useAddToPlaylist,
@@ -105,6 +105,7 @@ export function TrackMenu({
   className,
   placement,
   onOpenChange,
+  icon,
 }: {
   track: Track;
   className?: string;
@@ -112,6 +113,8 @@ export function TrackMenu({
   placement?: MenuPlacement;
   /** Told when the menu opens and closes; most mounts don't need to know. */
   onOpenChange?: (open: boolean) => void;
+  /** Optional custom icon; defaults to Android's vertical overflow dots (Common.kt:675). */
+  icon?: ReactNode;
 }) {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const close = useCallback(() => setAnchor(null), []);
@@ -121,6 +124,7 @@ export function TrackMenu({
   return (
     <>
       <button
+        type="button"
         className={className}
         aria-label={`More options for ${track.title}`}
         aria-haspopup="menu"
@@ -132,7 +136,7 @@ export function TrackMenu({
         }}
         onDoubleClick={(event) => event.stopPropagation()}
       >
-        <MoreHorizontal size={18} strokeWidth={2} />
+        {icon ?? <MoreVertical size={20} strokeWidth={2} />}
       </button>
       {anchor && (
         <Menu anchor={anchor} placement={placement} onClose={close} label={track.title}>

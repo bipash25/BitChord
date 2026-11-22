@@ -1,16 +1,12 @@
-/** A page-sized message, centred: also the Spotify page's sign-in invitation. */
+/** A page-sized message (`Common.kt:920-943`, `MessageState`), centred. */
 export const stateStyles = {
-  state: 'mx-auto my-20 flex max-w-[420px] flex-col items-center gap-2 px-(--body-gutter) text-center',
-  title: 'type-title-2-emphasized',
-  detail: 'type-body-tall text-secondary',
-  button: 'mt-3 inline-flex h-8 items-center rounded-pill bg-key-bg px-4 type-body-emphasized text-white',
+  state: 'mx-auto my-20 flex max-w-[420px] flex-col items-center gap-3 px-(--bc-page-gutter) text-center',
+  title: 'bc-type-headline text-(--bc-page-on,var(--bc-on-surface))',
+  detail: 'bc-type-body-lg text-(--bc-page-on-variant,var(--bc-on-surface-variant))',
+  button:
+    'mt-2 inline-flex h-10 items-center justify-center rounded-full bg-(--bc-primary) px-5 bc-type-title-md text-(--bc-on-primary) transition-opacity hover:opacity-90 disabled:opacity-40',
 };
 
-/**
- * In place of a YouTube page when the server relay can't be reached (prompt
- * §1): an explanation, not an error. Nothing can be installed to fix it —
- * the relay is the only transport — so the answer is a reload.
- */
 export function NeedsExtension({ what = 'YouTube Music' }: { what?: string }) {
   return (
     <div className={stateStyles.state}>
@@ -44,12 +40,11 @@ export function EmptyState({ title, detail }: { title: string; detail?: string }
   );
 }
 
-/** A later page of a long list failed: what's loaded stays, with a way to try again. */
 export function LoadMoreError({ onRetry }: { onRetry: () => void }) {
   return (
-    <div className="flex items-center justify-center gap-2.5 px-(--body-gutter) pt-6 pb-10 type-callout text-secondary">
+    <div className="flex items-center justify-center gap-2.5 px-(--bc-page-gutter) pt-6 pb-10 bc-type-body text-(--bc-page-on-variant,var(--bc-on-surface-variant))">
       <span>Couldn’t load more.</span>
-      <button className="type-callout-emphasized text-key" onClick={onRetry}>
+      <button className="bc-type-label text-(--bc-page-accent,var(--bc-primary)) hover:underline" onClick={onRetry}>
         Try Again
       </button>
     </div>

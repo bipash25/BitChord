@@ -49,6 +49,8 @@
 }
 
 :root {
+  color-scheme: light;
+
   /* ---- §2.1 Colour roles (Theme.kt:24, :38-48) ------------------------- */
   --bc-bg: #ffffff;
   --bc-surface: #f7f7f9;
@@ -59,6 +61,24 @@
   --bc-accent-red: #fa2d48;
   --bc-primary: #000000;
   --bc-on-primary: #ffffff;
+  --bc-green: #34c759;
+  --bc-scrim: rgba(0, 0, 0, 0.45);
+  --bc-alert-scrim: rgba(0, 0, 0, 0.28);
+  --bc-segmented-bg: rgba(118, 118, 128, 0.12);
+  --bc-segmented-pill: #ffffff;
+  --bc-thumbnail-border: rgba(0, 0, 0, 0.08);
+  --bc-skeleton-fill: rgba(0, 0, 0, 0.06);
+  --bc-skeleton-shimmer: rgba(255, 255, 255, 0.6);
+  --bc-hover-fill: rgba(0, 0, 0, 0.05);
+  --bc-active-row-fill: rgba(0, 0, 0, 0.14);
+
+  /* z-index layers */
+  --z-default: 1;
+  --z-bubbles: 50;
+  --z-gpu: 1001;
+  --z-web-chrome: 9901;
+  --z-contextual-menus: 9951;
+  --z-modal: 10001;
 
   /* Fixed menu tokens (IosMenu.kt:103-129) */
   --bc-menu-fill-dark: #1c1c1e;
@@ -201,6 +221,11 @@
   --bc-artist-play: 70px;
   --bc-top-release-corner: 24px;
 
+  /* Desktop-only rail & side panel metrics (kept for wide pointer viewports) */
+  --bc-sidebar-w: 260px;
+  --bc-sidepanel-w: 300px;
+  --bc-pill-bottom: 20px;
+
   /* Safe bottom floor matching Android's floatingBarInsets (FloatingBottomBar.kt:103). */
   --bc-bottom-inset: max(env(safe-area-inset-bottom, 0px), var(--bc-tabbar-gesture-floor));
 
@@ -216,6 +241,8 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
+    color-scheme: dark;
+
     --bc-bg: #000000;
     --bc-surface: #0d0d0f;
     --bc-surface-variant: #1c1c1e;
@@ -224,12 +251,47 @@
     --bc-outline: #2c2c2e;
     --bc-primary: #ffffff;
     --bc-on-primary: #000000;
+    --bc-green: #30d158;
+    --bc-scrim: rgba(0, 0, 0, 0.55);
+    --bc-segmented-bg: rgba(118, 118, 128, 0.24);
+    --bc-segmented-pill: #636366;
+    --bc-thumbnail-border: rgba(255, 255, 255, 0.1);
+    --bc-skeleton-fill: rgba(255, 255, 255, 0.07);
+    --bc-skeleton-shimmer: rgba(255, 255, 255, 0.08);
+    --bc-hover-fill: rgba(255, 255, 255, 0.06);
+    --bc-active-row-fill: rgba(255, 255, 255, 0.14);
 
     --bc-glass-tint: var(--bc-glass-tint-dark);
     --bc-indicator-alpha: 0.14;
     --bc-tab-pill-bg: rgba(255, 255, 255, 0.14);
     --bc-glass-content: var(--bc-glass-content-dark);
   }
+}
+
+/*
+ * Artwork-derived dynamic tint on detail pages (spec §5, ArtworkPalette.kt):
+ * glass surfaces take surfaceTint = --bc-page-elevated, and the page fades
+ * into its sleeve colour over 260ms unless known up front or reduced motion.
+ */
+[data-tint] {
+  --bc-glass-tint: color-mix(in srgb, var(--bc-page-elevated) 40%, transparent);
+  --bc-hover-fill: color-mix(in srgb, var(--bc-page-on) 7%, transparent);
+  --bc-active-row-fill: color-mix(in srgb, var(--bc-page-accent) 14%, transparent);
+  transition: background-color 260ms ease;
+}
+
+[data-tint='dark'] {
+  color-scheme: dark;
+  --bc-glass-content: #ffffff;
+}
+
+[data-tint='light'] {
+  color-scheme: light;
+  --bc-glass-content: #000000;
+}
+
+[data-tint][data-tint-snap='true'] {
+  transition: none;
 }
 
 /*
@@ -244,6 +306,9 @@
     --bc-glass-backdrop: none;
     --bc-top-fade-backdrop: none;
   }
+  [data-tint] {
+    --bc-glass-tint: var(--bc-page-elevated);
+  }
 }
 
 [data-reduced-blur='true'] {
@@ -252,4 +317,8 @@
   --bc-frost-backdrop: none;
   --bc-glass-backdrop: none;
   --bc-top-fade-backdrop: none;
+}
+
+[data-reduced-blur='true'] [data-tint] {
+  --bc-glass-tint: var(--bc-page-elevated);
 }

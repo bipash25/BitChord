@@ -11,9 +11,9 @@ import { TrackMenu } from './TrackMenu';
 type Option = { kind: 'query'; text: string; typed: string; rest: string } | { kind: 'item'; item: MusicItem };
 
 /**
- * The centred search field and its suggestions (report §6): a pill field, and
- * a glass dropdown of completions, then artist, album and song suggestions.
- * Arrow keys move through it; Enter picks; Escape closes.
+ * Android `PillTextField` search box (`Common.kt:957-1010`, spec §2.5 & §6.4):
+ * 40px height, 11px radius, flat `--bc-surface-variant` fill with no border,
+ * 15px body text, and frosted suggestion list.
  */
 export function SearchField({ initial, onSearch }: { initial: string; onSearch: (query: string) => void }) {
   const [value, setValue] = useState(initial);
@@ -23,11 +23,6 @@ export function SearchField({ initial, onSearch }: { initial: string; onSearch: 
   const listId = useId();
   const navigate = useNavigate();
   const suggestions = useSuggestions(open ? value : '');
-  // A suggestion's track menu takes focus when it opens (Menu focuses its
-  // first item), which would otherwise read as the field blurring and close
-  // the dropdown under the open menu. While a menu is open the blur close is
-  // held off; when the menu closes, its pick is done, so the dropdown
-  // closes with it.
   const menuOpen = useRef(false);
   const onMenuOpenChange = useCallback((isOpen: boolean) => {
     const wasOpen = menuOpen.current;
@@ -58,22 +53,22 @@ export function SearchField({ initial, onSearch }: { initial: string; onSearch: 
   };
 
   return (
-    <div className="relative w-[min(492px,100%)]">
+    <div className="relative w-full max-w-[640px]">
       <form
-        className="relative flex items-center"
+        className="relative flex h-10 items-center rounded-(--bc-radius-field) bg-(--bc-surface-variant) px-3"
         role="search"
         onSubmit={(e) => {
           e.preventDefault();
           pick(active >= 0 ? options[active] : undefined);
         }}
       >
-        <Search size={15} strokeWidth={2.4} className="pointer-events-none absolute left-2.5 text-secondary" aria-hidden="true" />
+        <Search size={18} strokeWidth={2.1} className="mr-2.5 shrink-0 text-(--bc-on-surface-variant)" aria-hidden="true" />
         <input
           ref={input}
-          className="h-[38px] w-full rounded-pill border border-search-border bg-page pt-1.5 pr-[30px] pb-[5px] pl-7 type-body text-primary placeholder:text-tertiary [&::-webkit-search-cancel-button]:hidden"
+          className="h-full min-w-0 flex-1 border-0 bg-transparent font-(family-name:--bc-font-family) text-[15px] leading-tight text-(--bc-on-surface) placeholder:text-(--bc-on-surface-variant) [&::-webkit-search-cancel-button]:hidden"
           type="search"
           value={value}
-          placeholder="Artists, Songs, Lyrics, and More"
+          placeholder="Songs, albums, artists"
           aria-label="Search"
           role="combobox"
           aria-expanded={showList}
@@ -103,70 +98,71 @@ export function SearchField({ initial, onSearch }: { initial: string; onSearch: 
         {value && (
           <button
             type="button"
-            className="absolute right-[9px] grid size-4 place-items-center rounded-full bg-tertiary text-page"
+            className="ml-2 grid size-5 shrink-0 place-items-center rounded-full bg-(--bc-on-surface-variant)/30 text-(--bc-on-surface)"
             aria-label="Clear"
             onClick={() => {
               setValue('');
               input.current?.focus();
             }}
           >
-            <X size={12} strokeWidth={3} />
+            <X size={12} strokeWidth={2.6} />
           </button>
         )}
       </form>
       {showList && (
-        // The dropdown: 302px of glass, 3px under the field.
         <ul
           id={listId}
-          className="absolute top-[calc(100%+3px)] left-0 z-(--z-contextual-menus) max-h-[min(700px,70vh)] w-[302px] overflow-y-auto rounded-[9px] border border-[#00000033] bg-thick-material py-1.5 shadow-[inset_0_0_0_1px_#ffffff33,0_8px_40px_#0000008c] [backdrop-filter:blur(60px)_saturate(2.2)]"
+          className="bc-frost bc-continuous absolute top-[calc(100%+6px)] right-0 left-0 z-(--z-contextual-menus) max-h-[min(520px,65vh)] overflow-y-auto rounded-[18px] p-1.5 shadow-(--bc-shadow-menu)"
           role="listbox"
         >
           {options.map((option, i) => {
             const item = option.kind === 'item' ? option.item : null;
             const playable = item !== null && (item.kind === 'song' || item.kind === 'video');
             return (
-            <li
-              key={option.kind === 'query' ? `q-${option.text}` : `i-${option.item.id}`}
-              id={`${listId}-${i}`}
-              role="option"
-              aria-selected={i === active}
-              className={option.kind === 'query' ? hint : `${lockup} ${playable ? lockupMenuCols : lockupCols}`}
-              data-active={i === active || undefined}
-              onMouseDown={(e) => e.preventDefault()}
-              onMouseEnter={() => setActive(i)}
-              onClick={() => pick(option)}
-            >
-              {option.kind === 'query' ? (
-                <>
-                  <Search size={13} strokeWidth={2.4} aria-hidden="true" />
-                  <span className="truncate">
-                    <span className="text-primary group-data-active/option:text-white">{option.typed}</span>
-                    <span>{option.rest}</span>
-                  </span>
-                </>
-              ) : (
-                <>
-                  <div className="w-[46px]">
-                    <Artwork
-                      src={option.item.thumbnail}
-                      displayWidth={46}
-                      radius={option.item.kind === 'artist' ? '50%' : 'var(--radius-artwork-small)'}
-                    />
-                  </div>
-                  <div className="flex min-w-0 flex-col">
-                    <span className="truncate type-body">{option.item.title}</span>
-                    <span className="mt-px truncate type-callout text-secondary group-data-active/option:text-white">{option.item.subtitle || kindLabel(option.item.kind)}</span>
-                  </div>
-                  {playable && item && (
-                    <TrackMenu
-                      track={toTrack(item)}
-                      onOpenChange={onMenuOpenChange}
-                      className="grid size-7 place-items-center rounded-full text-secondary opacity-0 transition-opacity duration-100 ease-in group-hover/option:opacity-100 group-data-active/option:text-white focus-visible:opacity-100 hover:bg-quinary group-data-active/option:hover:bg-white/20 data-open:opacity-100"
-                    />
-                  )}
-                </>
-              )}
-            </li>
+              <li
+                key={option.kind === 'query' ? `q-${option.text}` : `i-${option.item.id}`}
+                id={`${listId}-${i}`}
+                role="option"
+                aria-selected={i === active}
+                className={option.kind === 'query' ? hint : `${lockup} ${playable ? lockupMenuCols : lockupCols}`}
+                data-active={i === active || undefined}
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setActive(i)}
+                onClick={() => pick(option)}
+              >
+                {option.kind === 'query' ? (
+                  <>
+                    <Search size={15} strokeWidth={2.2} className="text-(--bc-on-surface-variant)" aria-hidden="true" />
+                    <span className="truncate">
+                      <span className="font-semibold text-(--bc-on-surface)">{option.typed}</span>
+                      <span className="text-(--bc-on-surface-variant)">{option.rest}</span>
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <div className="w-[46px]">
+                      <Artwork
+                        src={option.item.thumbnail}
+                        displayWidth={46}
+                        radius={option.item.kind === 'artist' ? '50%' : 'var(--bc-radius-art)'}
+                      />
+                    </div>
+                    <div className="flex min-w-0 flex-col">
+                      <span className="truncate bc-type-title-md text-(--bc-on-surface)">{option.item.title}</span>
+                      <span className="mt-0.5 truncate bc-type-body text-(--bc-on-surface-variant)">
+                        {option.item.subtitle || kindLabel(option.item.kind)}
+                      </span>
+                    </div>
+                    {playable && item && (
+                      <TrackMenu
+                        track={toTrack(item)}
+                        onOpenChange={onMenuOpenChange}
+                        className="grid size-8 place-items-center rounded-full text-(--bc-on-surface-variant) hover:bg-(--bc-hover-fill)"
+                      />
+                    )}
+                  </>
+                )}
+              </li>
             );
           })}
         </ul>
@@ -175,13 +171,23 @@ export function SearchField({ initial, onSearch }: { initial: string; onSearch: 
   );
 }
 
-// A suggestion row; hover or keyboard selection paints it in the key colour, white text.
-const optionRow = 'group/option mx-1.5 cursor-default rounded-[3px] data-active:bg-key-bg data-active:text-white';
-const hint = `${optionRow} grid grid-cols-[16px_minmax(0,1fr)] items-center p-1 type-body text-secondary`;
-const lockup = `${optionRow} mt-1.5 grid items-center gap-x-2.5 p-1.5`;
+const optionRow =
+  'group/option cursor-pointer rounded-[12px] data-active:bg-(--bc-tab-pill-bg) hover:bg-(--bc-hover-fill)';
+const hint = `${optionRow} grid grid-cols-[20px_minmax(0,1fr)] items-center gap-x-2.5 px-3 py-2.5 bc-type-body`;
+const lockup = `${optionRow} grid items-center gap-x-3 px-2.5 py-1.5`;
 const lockupCols = 'grid-cols-[46px_minmax(0,1fr)]';
 const lockupMenuCols = 'grid-cols-[46px_minmax(0,1fr)_auto]';
 
 function kindLabel(kind: MusicItem['kind']): string {
-  return { song: 'Song', video: 'Video', album: 'Album', playlist: 'Playlist', 'spotify-playlist': 'Spotify Playlist', artist: 'Artist', episode: 'Episode', podcast: 'Podcast', unknown: '' }[kind];
+  return {
+    song: 'Song',
+    video: 'Video',
+    album: 'Album',
+    playlist: 'Playlist',
+    'spotify-playlist': 'Spotify Playlist',
+    artist: 'Artist',
+    episode: 'Episode',
+    podcast: 'Podcast',
+    unknown: '',
+  }[kind];
 }

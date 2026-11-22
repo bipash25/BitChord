@@ -6,17 +6,17 @@ import { LoadError, NeedsExtension } from '@/components/music/States';
 import { TrackList } from '@/components/music/TrackList';
 import { useAlbumMotion } from '@/data/apple/motionArt';
 import { useAlbum, useYouTubeReady } from '@/data/music/queries';
-import { useArtworkColor } from '@/lib/artworkColor';
+import { useArtworkPalette } from '@/lib/artworkPalette';
 import { usePageTint } from '@/lib/usePageTint';
 import { AlbumSkeleton } from '@/skeletons/PageSkeletons';
 import { detailFooter } from './pageStyles';
 
-/** An album (report §3): header, numbered tracks, footer, "more" shelves. */
+/** Album detail (`DetailScreen.kt:190-282`, spec §6.5): dynamic sleeve palette, framed sleeve, numbered SongRows. */
 export default function AlbumPage() {
   const id = decodeURIComponent(useParams().id ?? '');
   const { missing } = useYouTubeReady();
   const album = useAlbum(id);
-  usePageTint(useArtworkColor(album.data?.thumbnail));
+  usePageTint(useArtworkPalette(album.data?.thumbnail));
   const motion = useAlbumMotion(album.data?.title, album.data?.artists.map((a) => a.name).join(', '));
 
   if (missing) return <NeedsExtension />;
@@ -49,13 +49,12 @@ export default function AlbumPage() {
         source={context.source}
       />
       <footer className={detailFooter}>
-        <p>{data.subtitle}</p>
-        <p>{data.meta}</p>
+        {data.subtitle && <p>{data.subtitle}</p>}
+        {data.meta && <p>{data.meta}</p>}
         {artists && <p>{artists}</p>}
       </footer>
       {data.more.length > 0 && (
-        // "More By" and friends sit on the alternate shelf background (report §3, section--alternate).
-        <div className="bg-shelf pb-5">
+        <div className="pb-5">
           <Shelves shelves={data.more} />
         </div>
       )}

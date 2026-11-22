@@ -76,8 +76,7 @@ export function Menu({ anchor, placement = 'below-end', onClose, label, matchWid
       <div className="fixed inset-0 z-[calc(var(--z-contextual-menus)-1)]" onPointerDown={onClose} aria-hidden="true" />
       <div
         ref={panel}
-        // Apple's amp-contextual-menu (report §8).
-        className="fixed z-(--z-contextual-menus) max-w-[300px] min-w-[185px] animate-menu-in overflow-y-auto rounded-[10px] bg-thick-material p-[5px] shadow-[0_0_0_0.5px_var(--vibrantDivider),0_10px_40px_var(--glassMaterialShadowColor)] [backdrop-filter:saturate(2.2)_blur(32px)]"
+        className="bc-frost bc-continuous fixed z-(--z-contextual-menus) max-w-[300px] min-w-[200px] animate-menu-in overflow-y-auto rounded-[20px] p-1.5 shadow-(--bc-shadow-menu)"
         style={position}
         role="menu"
         aria-label={label}
@@ -104,26 +103,30 @@ interface MenuItemProps {
 export function MenuItem({ onSelect, icon, checked, destructive, disabled, trailing, children }: MenuItemProps) {
   return (
     <button
-      className="flex min-h-7 w-full items-center gap-2 rounded-[5px] px-2 py-1 text-start type-body text-primary enabled:hover:bg-quinary focus-visible:bg-quinary disabled:text-tertiary data-destructive:text-destructive"
+      className="flex min-h-10 w-full items-center gap-2.5 rounded-[14px] px-3 py-2 text-start bc-type-body text-(--bc-on-surface) enabled:hover:bg-(--bc-hover-fill) focus-visible:bg-(--bc-hover-fill) disabled:opacity-40 data-destructive:text-(--bc-accent-red)"
       role={checked === undefined ? 'menuitem' : 'menuitemradio'}
       aria-checked={checked === undefined ? undefined : !!checked}
       data-destructive={destructive || undefined}
       disabled={disabled}
       onClick={onSelect}
     >
-      {checked !== undefined && <span className="inline-grid w-3.5 flex-none place-items-center text-key">{checked && <Check size={14} strokeWidth={2.6} />}</span>}
-      {icon && <span className="inline-grid w-5 flex-none place-items-center text-secondary">{icon}</span>}
+      {checked !== undefined && (
+        <span className="inline-grid w-3.5 flex-none place-items-center text-(--bc-primary)">
+          {checked && <Check size={14} strokeWidth={2.6} />}
+        </span>
+      )}
+      {icon && <span className="inline-grid w-5 flex-none place-items-center text-(--bc-on-surface-variant)">{icon}</span>}
       <span className="min-w-0 flex-1 truncate">{children}</span>
-      {trailing && <span className="flex-none text-secondary">{trailing}</span>}
+      {trailing && <span className="flex-none text-(--bc-on-surface-variant)">{trailing}</span>}
     </button>
   );
 }
 
 export function MenuSeparator() {
-  return <div className="mx-2 my-[5px] border-t-[0.5px] border-t-vibrant-divider" role="separator" />;
+  return <div className="mx-3 my-1 border-t-[0.5px] border-t-(--bc-outline)" role="separator" />;
 }
 
 /** A non-interactive heading inside a menu. */
 export function MenuHeader({ children }: { children: ReactNode }) {
-  return <div className="px-2 pt-1.5 pb-1 type-subhead-emphasized text-secondary">{children}</div>;
+  return <div className="px-3 pt-1.5 pb-1 bc-type-label-sm uppercase text-(--bc-on-surface-variant)">{children}</div>;
 }

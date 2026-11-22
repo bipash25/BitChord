@@ -5,18 +5,18 @@ import { playList, shuffleList } from '@/components/music/play';
 import { LoadError, LoadMoreError, NeedsExtension } from '@/components/music/States';
 import { TrackList } from '@/components/music/TrackList';
 import { usePlaylist, useYouTubeReady } from '@/data/music/queries';
-import { useArtworkColor } from '@/lib/artworkColor';
+import { useArtworkPalette } from '@/lib/artworkPalette';
 import { usePageTint } from '@/lib/usePageTint';
 import { PlaylistSkeleton } from '@/skeletons/PageSkeletons';
 import { detailFooter } from './pageStyles';
 
-/** A playlist (report §14): header, then the artwork track list, loading on as you scroll. */
+/** Playlist detail (`DetailScreen.kt:301-386`, spec §6.7): dynamic palette, framed sleeve, artwork SongRows. */
 export default function PlaylistPage() {
   const id = decodeURIComponent(useParams().id ?? '');
   const { missing } = useYouTubeReady();
   const playlist = usePlaylist(id);
   const header = playlist.data?.pages[0]?.header ?? null;
-  usePageTint(useArtworkColor(header?.thumbnail));
+  usePageTint(useArtworkPalette(header?.thumbnail));
 
   const { hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage } = playlist;
   const onNearEnd = useCallback(() => {
@@ -38,10 +38,14 @@ export default function PlaylistPage() {
         onShuffle={() => shuffleList(tracks, context)}
       />
       <TrackList tracks={tracks} variant="playlist" onNearEnd={onNearEnd} source={context.source} />
-      {isFetchingNextPage && <div className="flex justify-center py-5 type-callout text-secondary">Loading more songs…</div>}
+      {isFetchingNextPage && (
+        <div className="flex justify-center py-5 bc-type-body text-(--bc-page-on-variant,var(--bc-on-surface-variant))">
+          Loading more songs…
+        </div>
+      )}
       {playlist.isFetchNextPageError && <LoadMoreError onRetry={() => void fetchNextPage()} />}
       <footer className={detailFooter}>
-        <p>{header.meta}</p>
+        {header.meta && <p>{header.meta}</p>}
       </footer>
     </>
   );

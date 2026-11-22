@@ -1,14 +1,13 @@
-/** Styles shared by several pages. */
+/** Styles shared across inner pages (`Common.kt:221-257`, spec §2.5 & §6.8). */
 
-/** Album and playlist footer (report §3): 13px/18px secondary, release line, counts, label. */
-export const detailFooter = 'mx-(--body-gutter) mt-[34px] px-3 pb-10 type-body-tall text-secondary';
+export const detailFooter =
+  'mx-(--bc-page-gutter) mt-8 pb-10 bc-type-body text-(--bc-page-on-variant,var(--bc-on-surface-variant))';
 
 /**
- * See All grids: the shelf's column counts, wrapping instead of scrolling
- * (report §2). `data-wide` for video lockups.
+ * Library / Browse grids (`Common.kt:221-229`): 140px minimum card, 12px gaps,
+ * 2–5 columns (4 columns max for 16:9 wide video cards).
  */
 export const seeAllGrid =
-  'mx-(--body-gutter) mt-5 mb-10 grid grid-cols-[repeat(auto-fill,minmax(170px,1fr))] gap-x-5 gap-y-6 data-wide:grid-cols-[repeat(auto-fill,minmax(240px,1fr))] min-[1260px]:grid-cols-5 min-[1260px]:data-wide:grid-cols-4 min-[1580px]:grid-cols-6';
+  'mx-(--bc-page-gutter) mt-4 mb-10 grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3 min-[980px]:grid-cols-5 data-wide:grid-cols-[repeat(auto-fill,minmax(220px,1fr))] min-[1260px]:data-wide:grid-cols-4';
 
-/** A track list under a See All grid. */
-export const seeAllTracks = 'pt-7';
+export const seeAllTracks = 'pt-3';

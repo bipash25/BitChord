@@ -42,8 +42,8 @@ const LIBRARY_ICONS: Record<Exclude<LibrarySection, 'playlists'>, NavItem['Icon'
 };
 
 const LIBRARY: NavItem[] = (Object.keys(LIBRARY_ICONS) as (keyof typeof LIBRARY_ICONS)[]).map((section) => ({
-  to: `/library/${section}`,
-  label: LIBRARY_SECTIONS[section].title,
+  to: section === 'recent' ? '/history' : `/library/${section}`,
+  label: section === 'recent' ? 'History' : LIBRARY_SECTIONS[section].title,
   Icon: LIBRARY_ICONS[section],
 }));
 
@@ -140,7 +140,7 @@ export function Sidebar() {
   return (
     <>
       <nav
-        className="bc-frost absolute inset-y-0 left-0 z-(--z-web-chrome) flex w-(--web-navigation-width) flex-col border-0 border-r-[0.5px] border-r-(--bc-glass-edge) max-lg:fixed max-lg:z-[calc(var(--z-web-chrome)+2)] max-lg:w-[min(300px,82vw)] max-lg:-translate-x-full max-lg:shadow-(--bc-shadow-menu) max-lg:transition-transform max-lg:duration-260 max-lg:ease-[cubic-bezier(0.2,0,0,1)] max-lg:data-[open=true]:translate-x-0"
+        className="bc-frost absolute inset-y-0 left-0 z-(--z-web-chrome) flex w-(--bc-sidebar-w) flex-col border-0 border-r-[0.5px] border-r-(--bc-glass-edge) max-lg:fixed max-lg:z-[calc(var(--z-web-chrome)+2)] max-lg:w-[min(300px,82vw)] max-lg:-translate-x-full max-lg:shadow-(--bc-shadow-menu) max-lg:transition-transform max-lg:duration-260 max-lg:ease-[cubic-bezier(0.2,0,0,1)] max-lg:data-[open=true]:translate-x-0"
         data-open={drawerOpen}
         aria-label="Main"
       >

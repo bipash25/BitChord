@@ -23,12 +23,13 @@ import { usePlayer } from '@/state/player';
 import { Toggle } from './IntegrationSettings';
 import { settingsUi } from './settingsStyles';
 
-const lede = 'mx-4 mb-4 type-body-tall text-secondary';
-const error = 'mx-4 mt-3 type-callout text-red';
-const primary = 'flex-none rounded-pill bg-key-bg px-4 py-1.5 type-body-emphasized text-white disabled:opacity-45';
-// The code, large, as the phone shows it.
-const invite = 'flex flex-col items-center gap-2.5 rounded-[10px] bg-quinary px-4 py-7 text-center';
-const inviteCode = 'type-[700_40px/48px] tracking-[0.18em]';
+const lede = 'mx-1 mb-4 bc-type-body-lg text-(--bc-on-surface-variant)';
+const error = 'mx-1 mt-3 bc-type-body text-(--bc-accent-red)';
+const primary =
+  'flex-none rounded-full bg-(--bc-primary) px-4 py-1.5 bc-type-title-md text-(--bc-on-primary) transition-opacity hover:opacity-90 disabled:opacity-45';
+const invite =
+  'flex flex-col items-center gap-2.5 rounded-(--bc-radius-group) bg-(--bc-surface-variant) px-4 py-7 text-center';
+const inviteCode = 'font-(family-name:--bc-font-family) text-[40px] leading-[48px] font-bold tracking-[0.18em] text-(--bc-on-surface)';
 
 /**
  * Listen Together (ListenTogetherScreen on the phone): start a party or join
@@ -109,7 +110,7 @@ function StartOrJoin({ signedIn }: { signedIn: boolean }) {
           <span>Join with a Code</span>
           <span className="flex gap-2">
             <input
-              className="w-[110px] flex-none rounded-[8px] border-0 bg-quaternary px-2.5 py-[5px] text-center type-body tracking-[0.12em] text-primary uppercase"
+              className="h-10 w-[110px] flex-none rounded-(--bc-radius-field) border-0 bg-(--bc-bg) px-2.5 text-center bc-type-body tracking-[0.12em] text-(--bc-on-surface) uppercase placeholder:text-(--bc-on-surface-variant)"
               value={code}
               maxLength={7}
               placeholder="ABC123"
@@ -175,7 +176,7 @@ function InviteCard({ code, server, signedIn }: { code: string; server: string |
       )}
       {!signedIn && <SignInFirst />}
       <button
-        className="mt-1.5 flex-none rounded-pill bg-key-bg px-7 py-2.5 type-title-3-emphasized text-white disabled:opacity-45"
+        className="mt-1.5 flex-none rounded-full bg-(--bc-primary) px-7 py-2.5 bc-type-title-md text-(--bc-on-primary) transition-opacity hover:opacity-90 disabled:opacity-45"
         disabled={!signedIn || join.isPending || data?.isFull || preview.isError}
         onClick={() => join.mutate()}
       >
@@ -186,7 +187,7 @@ function InviteCard({ code, server, signedIn }: { code: string; server: string |
 }
 
 function Avatar({ name, url, large = false }: { name: string; url: string | null; large?: boolean }) {
-  const className = `grid place-items-center rounded-full bg-quaternary object-cover type-callout-emphasized ${large ? 'size-9' : 'size-6'}`;
+  const className = `grid place-items-center rounded-full bg-(--bc-outline) object-cover bc-type-label text-(--bc-on-surface) ${large ? 'size-9' : 'size-6'}`;
   return url ? (
     <img className={className} src={url} alt="" referrerPolicy="no-referrer" />
   ) : (
@@ -223,7 +224,7 @@ function InParty() {
         <p className={inviteCode}>{state.code}</p>
         <p className={settingsUi.footer}>{status}</p>
         <button
-          className="inline-flex items-center gap-1.5 rounded-pill bg-quaternary px-3.5 py-1.5 type-callout-emphasized"
+          className="inline-flex items-center gap-1.5 rounded-full bg-(--bc-tab-pill-bg) px-3.5 py-1.5 bc-type-label text-(--bc-on-surface) hover:opacity-85"
           onClick={() => void navigator.clipboard.writeText(link).then(() => setCopied(true))}
           title={link}
         >
@@ -237,17 +238,27 @@ function InParty() {
       </h2>
       <section className={settingsUi.group}>
         {state.members.map((m) => (
-          <div key={m.memberId} className={settingsUi.integrationPlain}>
+          <div key={m.memberId} className={settingsUi.integration}>
             <Avatar name={m.displayName} url={m.avatarUrl} />
             <span className={settingsUi.integrationName}>
               {m.displayName}
-              {m.memberId === state.you?.memberId && <span className="text-secondary"> (you)</span>}
+              {m.memberId === state.you?.memberId && (
+                <span className="text-(--bc-on-surface-variant)"> (you)</span>
+              )}
             </span>
             <span className={settingsUi.value}>
               {m.isHost && <Crown size={14} aria-label="Host" />}
-              <span className="size-2 rounded-full bg-quaternary data-on:bg-green" data-on={m.connected || undefined} title={m.connected ? 'Connected' : 'Reconnecting'} />
+              <span
+                className="size-2 rounded-full bg-(--bc-outline) data-on:bg-(--bc-green)"
+                data-on={m.connected || undefined}
+                title={m.connected ? 'Connected' : 'Reconnecting'}
+              />
               {isHost && m.memberId !== state.you?.memberId && (
-                <button className={settingsUi.inlineButton} onClick={() => party.kick(m.memberId)} title="Remove from the party">
+                <button
+                  className={settingsUi.inlineButton}
+                  onClick={() => party.kick(m.memberId)}
+                  title="Remove from the party"
+                >
                   <UserMinus size={13} />
                 </button>
               )}
@@ -273,7 +284,11 @@ function InParty() {
           />
         )}
       </section>
-      {locked && <p className={settingsUi.footer}>The host controls the music in this party. You can still pause your own device.</p>}
+      {locked && (
+        <p className={settingsUi.footer}>
+          The host controls the music in this party. You can still pause your own device.
+        </p>
+      )}
 
       {state.activity.length > 0 && (
         <>
@@ -287,14 +302,19 @@ function InParty() {
                   </span>
                   {a.detail && <span className={settingsUi.rowDetail}>{a.detail}</span>}
                 </span>
-                <span className={settingsUi.rowDetail}>{new Date(a.atMs).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
+                <span className={settingsUi.rowDetail}>
+                  {new Date(a.atMs).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                </span>
               </div>
             ))}
           </section>
         </>
       )}
 
-      <button className="mx-4 mt-6 inline-flex items-center gap-1.5 type-body-emphasized text-red" onClick={() => void leaveParty().then(() => navigate('/settings/listen-together'))}>
+      <button
+        className="mx-1 mt-6 inline-flex items-center gap-1.5 bc-type-title-md text-(--bc-accent-red) hover:underline"
+        onClick={() => void leaveParty().then(() => navigate('/settings/listen-together'))}
+      >
         <LogOut size={15} />
         Leave Party
       </button>

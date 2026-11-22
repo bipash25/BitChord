@@ -9,19 +9,17 @@ import { TrackList } from '@/components/music/TrackList';
 import { createPlaylist } from '@/data/music/api';
 import { useSignedIn } from '@/data/music/queries';
 import type { HeaderInfo } from '@/data/music/types';
+import { useSpotifyAuth, useSpotifySignedIn } from '@/data/spotify/auth';
 import { useSpotifyPlaylistInfo, useSpotifyRows } from '@/data/spotify/queries';
 import { useExtension } from '@/extension/useExtension';
-import { useSpotifyAuth, useSpotifySignedIn } from '@/data/spotify/auth';
-import { useArtworkColor } from '@/lib/artworkColor';
+import { useArtworkPalette } from '@/lib/artworkPalette';
 import { usePageTint } from '@/lib/usePageTint';
 import { PlaylistSkeleton } from '@/skeletons/PageSkeletons';
 import { detailFooter } from './pageStyles';
 
 /**
- * A Spotify playlist as an ordinary playlist page (MainViewModel.openSpotifyPage):
- * Spotify's rows go up at once, each swapped for its YouTube Music song as the
- * match arrives. Import keeps the result as a YouTube Music playlist
- * (SpotifyImportAlert), with the songs that found nothing left out and named.
+ * A Spotify playlist as an ordinary playlist page: Spotify's rows go up at once,
+ * each swapped for its YouTube Music song as the match arrives.
  */
 export default function SpotifyPlaylistPage() {
   const id = decodeURIComponent(useParams().id ?? '');
@@ -30,11 +28,9 @@ export default function SpotifyPlaylistPage() {
   const signedIn = useSpotifySignedIn();
   const info = useSpotifyPlaylistInfo(id);
   const rows = useSpotifyRows(id);
-  usePageTint(useArtworkColor(info.data?.imageUrl));
+  usePageTint(useArtworkPalette(info.data?.imageUrl));
 
   if (auth.state === 'unconfigured') return <EmptyState title="Spotify isn’t configured on this deployment" />;
-  // The rows come from Spotify directly, but every one of them is resolved to
-  // a YouTube Music song, and that search is the relay's to carry.
   if (extension.state === 'missing') return <NeedsExtension what="your Spotify playlists" />;
   if (!signedIn) return <EmptyState title="Sign in to Spotify" detail="Open Spotify in the sidebar to connect your account." />;
   if (rows.status === 'error' && !rows.rows.length) return <LoadError error={rows.error} onRetry={rows.retry} />;
@@ -100,6 +96,7 @@ function ImportButton({ title, videoIds, ready }: { title: string; videoIds: str
           : 'Import to YouTube Music';
   return (
     <button
+      type="button"
       className={confirming ? detailButton.pill : detailButton.circle}
       aria-label={label}
       title={label}

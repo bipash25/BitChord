@@ -12,7 +12,7 @@ interface BlockProps {
 // A soft highlight sweeping left to right; still under reduced motion. The sweep animates
 // `transform` from the -100% it starts at, so it is set as a transform, not a translate.
 const block =
-  'relative shrink-0 overflow-hidden rounded-[4px] bg-skeleton after:absolute after:inset-0 after:transform-[translateX(-100%)] after:animate-shimmer after:bg-[linear-gradient(90deg,transparent_0,var(--skeleton-shimmer)_50%,transparent_100%)] motion-reduce:after:hidden motion-reduce:after:animate-none';
+  'relative shrink-0 overflow-hidden rounded-[6px] bg-(--bc-skeleton-fill) after:absolute after:inset-0 after:transform-[translateX(-100%)] after:animate-shimmer after:bg-[linear-gradient(90deg,transparent_0,var(--bc-skeleton-shimmer)_50%,transparent_100%)] motion-reduce:after:hidden motion-reduce:after:animate-none';
 
 /** A placeholder box with a shimmer. Purely decorative, so hidden from AT. */
 export function SkeletonBlock({ width, height, radius, aspectRatio, className, style }: BlockProps) {

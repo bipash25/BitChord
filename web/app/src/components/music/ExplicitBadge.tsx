@@ -6,7 +6,7 @@
 export function ExplicitBadge({ size = 12 }: { size?: number }) {
   return (
     <svg
-      className="ms-1 inline-block shrink-0 align-[-1px] text-secondary"
+      className="ms-1 inline-block shrink-0 align-[-1px] text-(--bc-page-on-variant,var(--bc-on-surface-variant))"
       width={size}
       height={size}
       viewBox="0 0 12 12"

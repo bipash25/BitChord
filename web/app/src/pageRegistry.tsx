@@ -4,6 +4,7 @@ import { prefetchPageData } from '@/data/music/queries';
 import {
   AlbumSkeleton,
   ArtistSkeleton,
+  HistorySkeleton,
   HomeSkeleton,
   NewSkeleton,
   PlainSkeleton,
@@ -31,6 +32,7 @@ export const pages: PageRoute[] = [
   { path: '/artist/:id', load: () => import('@/pages/ArtistPage'), skeleton: <ArtistSkeleton /> },
   { path: '/playlist/:id', load: () => import('@/pages/PlaylistPage'), skeleton: <PlaylistSkeleton /> },
   { path: '/browse/:id', load: () => import('@/pages/BrowsePage'), skeleton: <PlainSkeleton /> },
+  { path: '/history', load: () => import('@/pages/HistoryPage'), skeleton: <HistorySkeleton /> },
   { path: '/library/:section', load: () => import('@/pages/LibraryPage'), skeleton: <PlainSkeleton /> },
   { path: '/spotify', load: () => import('@/pages/SpotifyPage'), skeleton: <PlainSkeleton /> },
   { path: '/spotify/playlist/:id', load: () => import('@/pages/SpotifyPlaylistPage'), skeleton: <PlaylistSkeleton /> },

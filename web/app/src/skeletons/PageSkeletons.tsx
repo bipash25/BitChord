@@ -1,18 +1,14 @@
 import { PageHeader } from '@/components/PageHeader';
 import { SkeletonBlock, SkeletonLine } from '@/components/Skeleton';
-import { DetailSkeleton } from './DetailSkeleton';
+import { DetailSkeleton, SongListSkeleton } from './DetailSkeleton';
 import { ShelfSkeleton } from './ShelfSkeleton';
 
-// Route fallbacks. They live in the main bundle, so a route's skeleton shows
-// before its own chunk has loaded. The title is real text: it's known up front.
-
-const sectionTitle = 'mx-(--body-gutter) mt-3';
+const sectionTitle = 'mx-(--bc-page-gutter) mt-3';
 
 export function HomeSkeleton() {
   return (
     <div aria-busy="true">
       <PageHeader title="Home" />
-      <ShelfSkeleton kind="editorial" />
       <ShelfSkeleton kind="tracks" />
       <ShelfSkeleton kind="square" />
       <ShelfSkeleton kind="square" />
@@ -24,9 +20,8 @@ export function NewSkeleton() {
   return (
     <div aria-busy="true">
       <PageHeader title="New" />
-      <ShelfSkeleton kind="editorial" title={false} />
-      <ShelfSkeleton kind="tracks" />
       <ShelfSkeleton kind="square" />
+      <ShelfSkeleton kind="tracks" />
       <ShelfSkeleton kind="square" />
     </div>
   );
@@ -35,18 +30,18 @@ export function NewSkeleton() {
 export function SearchSkeleton() {
   return (
     <div aria-busy="true">
-      <div className="flex justify-center px-(--body-gutter) py-3" aria-hidden="true">
-        <SkeletonBlock width="min(492px, 100%)" height={38} radius="var(--radius-pill)" />
+      <div className="px-(--bc-page-gutter) pt-3 pb-2" aria-hidden="true">
+        <SkeletonBlock width="100%" height={40} radius="var(--bc-radius-field)" />
       </div>
       <div className={sectionTitle} aria-hidden="true">
-        <SkeletonLine lineHeight={22} fontSize={17} width={160} />
+        <SkeletonLine lineHeight={26} fontSize={20} width={160} />
       </div>
       <div
-        className="mx-(--body-gutter) mt-3 mb-8 grid grid-cols-[repeat(4,1fr)] gap-5 max-lg:grid-cols-[repeat(3,1fr)] max-[607px]:grid-cols-[repeat(2,1fr)]"
+        className="mx-(--bc-page-gutter) mt-3 mb-8 grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(220px,1fr))]"
         aria-hidden="true"
       >
-        {Array.from({ length: 16 }, (_, i) => (
-          <SkeletonBlock key={i} aspectRatio="16 / 9" radius="var(--radius-artwork-large)" />
+        {Array.from({ length: 12 }, (_, i) => (
+          <SkeletonBlock key={i} aspectRatio="1.72" radius="var(--bc-radius-mood-card)" />
         ))}
       </div>
     </div>
@@ -61,15 +56,28 @@ export function PlaylistSkeleton() {
   return <DetailSkeleton rowArtwork rows={10} />;
 }
 
+export function HistorySkeleton() {
+  return (
+    <div aria-busy="true">
+      <PageHeader title="History" />
+      <div className="pt-2">
+        <SongListSkeleton count={10} />
+      </div>
+    </div>
+  );
+}
+
 export function ArtistSkeleton() {
   return (
     <div aria-busy="true">
-      {/* The artist hero is ~1.93:1 of the content column (604px tall at 1165px). */}
-      <SkeletonBlock className="aspect-[1165/604] max-h-[70vh] w-full" radius={0} />
+      <SkeletonBlock className="aspect-[0.95] max-h-[60vh] w-full max-lg:-mt-[calc(env(safe-area-inset-top,0px)+var(--bc-topbar-h))]" radius={0} />
+      <div className="mt-4 flex justify-center gap-6" aria-hidden="true">
+        <SkeletonBlock width={52} height={52} radius="9999px" />
+        <SkeletonBlock width={70} height={70} radius="9999px" />
+      </div>
       <ShelfSkeleton kind="tracks" />
       <ShelfSkeleton kind="square" />
       <ShelfSkeleton kind="square" />
-      <ShelfSkeleton kind="circle" />
     </div>
   );
 }
@@ -77,7 +85,7 @@ export function ArtistSkeleton() {
 export function PlainSkeleton() {
   return (
     <div aria-busy="true" className={sectionTitle}>
-      <SkeletonLine lineHeight={40} fontSize={34} width={220} style={{ marginTop: 32 }} />
+      <SkeletonLine lineHeight={39} fontSize={34} width={220} style={{ marginTop: 32 }} />
     </div>
   );
 }

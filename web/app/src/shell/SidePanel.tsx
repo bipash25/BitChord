@@ -14,7 +14,7 @@ export function SidePanel() {
 
   return (
     <aside
-      className="absolute inset-y-0 right-0 z-(--z-web-chrome) flex w-(--side-panel-width) animate-slide-in flex-col glass-material shadow-glass max-sm:w-full"
+      className="bc-frost absolute inset-y-0 right-0 z-(--z-web-chrome) flex w-(--bc-sidepanel-w) animate-slide-in flex-col border-0 border-l-[0.5px] border-l-(--bc-glass-edge) shadow-(--bc-shadow-menu) max-sm:w-full"
       aria-label={panel === 'up-next' ? 'Up Next' : 'Lyrics'}
     >
       {panel === 'up-next' ? (

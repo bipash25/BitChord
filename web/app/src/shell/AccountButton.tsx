@@ -6,17 +6,16 @@ import { queryClient } from '@/lib/queryClient';
 import { adoptYtAuth, useYtAuth, ytAuthQueryKey } from '@/extension/useYtAuth';
 import { JAR_MAX_CHARS, clearUserJar, setUserJar, verifyUserJar } from '@/extension/userJar';
 
-// The signed-out pill: Apple's red "Sign In" (report §1, .navigation__native-cta).
 const pill =
-  'self-start rounded-[16px] bg-key px-3.5 py-[5px] type-[600_13px/18px] text-white hover:brightness-[1.08]';
-// The prompt's actions, in the key-colour pill idiom the app uses elsewhere.
-const action = 'inline-flex h-8 items-center whitespace-nowrap rounded-pill bg-key-bg px-4 type-body-emphasized text-white hover:brightness-[1.08]';
+  'self-start rounded-full bg-(--bc-primary) px-3.5 py-1.5 bc-type-label text-(--bc-on-primary) hover:opacity-90';
+const action =
+  'inline-flex h-9 items-center justify-center whitespace-nowrap rounded-full bg-(--bc-primary) px-4 bc-type-title-md text-(--bc-on-primary) hover:opacity-90';
 const secondary =
-  'inline-flex h-8 items-center whitespace-nowrap rounded-pill bg-quinary px-4 type-body-emphasized text-primary hover:brightness-[1.08]';
+  'inline-flex h-9 items-center justify-center whitespace-nowrap rounded-full bg-(--bc-tab-pill-bg) px-4 bc-type-title-md text-(--bc-on-surface) hover:opacity-85';
 const avatar =
-  'inline-grid flex-none place-items-center rounded-full bg-quinary object-cover type-[600_11px/1] text-secondary';
+  'inline-grid flex-none place-items-center rounded-full bg-(--bc-surface-variant) object-cover bc-type-label-sm text-(--bc-on-surface-variant)';
 const field =
-  'w-full rounded-[8px] bg-[#333336] px-3 py-2 type-body text-primary placeholder:text-tertiary focus:outline-none focus:ring-1 focus:ring-key';
+  'w-full rounded-(--bc-radius-field) bg-(--bc-surface-variant) px-3 py-2 bc-type-body text-(--bc-on-surface) placeholder:text-(--bc-on-surface-variant) focus:outline-none';
 
 /**
  * The sidebar's account control. Whichever session is live answers for the
@@ -40,7 +39,7 @@ export function AccountButton() {
     <div>
       {identity ? (
         <button
-          className="flex w-full min-w-0 items-center gap-2 rounded-nav px-1 py-1.5 type-body-reduced text-primary hover:bg-quinary"
+          className="flex w-full min-w-0 items-center gap-2 rounded-[12px] px-1 py-1.5 bc-type-body text-(--bc-on-surface) hover:bg-(--bc-surface-variant)"
           aria-haspopup="dialog"
           onClick={() => setOpen(true)}
         >
@@ -153,29 +152,32 @@ function SignInDialog({ auth, onClose }: { auth: YtAuthState; onClose: () => voi
   };
 
   return createPortal(
-    // A modal (report §8): scrim, 14px card radius, fade with a slight zoom, 30px close circle.
     <div
-      className="fixed inset-0 z-(--z-modal) grid animate-fade place-items-center bg-scrim"
+      className="fixed inset-0 z-(--z-modal) grid animate-fade place-items-center bg-(--bc-scrim)"
       onPointerDown={(e) => e.target === e.currentTarget && onClose()}
     >
       <div
-        className="flex max-h-[min(560px,calc(100vh-32px))] w-[min(400px,calc(100vw-32px))] animate-zoom flex-col overflow-y-auto rounded-[14px] bg-page shadow-glass"
+        className="flex max-h-[min(560px,calc(100vh-32px))] w-[min(400px,calc(100vw-32px))] animate-zoom flex-col overflow-y-auto rounded-(--bc-radius-alert) bg-(--bc-surface) shadow-(--bc-shadow-menu)"
         role="dialog"
         aria-modal="true"
         aria-label="Sign in with YouTube"
       >
         <header className="flex items-center justify-between px-5 pt-[18px] pb-1">
-          <h2 className="type-title-2-emphasized">
+          <h2 className="bc-type-title text-(--bc-on-surface)">
             {step.kind === 'connected' ? 'YouTube Music' : step.kind === 'failed' ? 'Couldn’t connect' : 'Sign in with YouTube'}
           </h2>
-          <button className="grid size-[30px] place-items-center rounded-full bg-[#333336] text-secondary" aria-label="Close" onClick={onClose}>
+          <button
+            className="grid size-[30px] place-items-center rounded-full bg-(--bc-surface-variant) text-(--bc-on-surface-variant) hover:bg-(--bc-hover-fill)"
+            aria-label="Close"
+            onClick={onClose}
+          >
             <X size={16} />
           </button>
         </header>
 
         {step.kind === 'intro' && (
           <section className="flex flex-col gap-4 px-5 pt-2 pb-5">
-            <p className="type-body-tall text-secondary">
+            <p className="bc-type-body-lg text-(--bc-on-surface-variant)">
               Your library, likes, history and recommendations play here when you connect your YouTube Music account.
               Start by signing in on music.youtube.com, then come back.
             </p>
@@ -190,11 +192,11 @@ function SignInDialog({ auth, onClose }: { auth: YtAuthState; onClose: () => voi
 
         {step.kind === 'export' && (
           <section className="flex flex-col gap-3 px-5 pt-2 pb-5">
-            <p className="type-body-tall text-secondary">
+            <p className="bc-type-body-lg text-(--bc-on-surface-variant)">
               BitChord reads your YouTube session from this browser, and the browser keeps it from web pages — so the
               one thing it can’t do quietly is hand it over. Export it yourself:
             </p>
-            <ol className="flex list-decimal flex-col gap-2 pl-4 type-body text-primary">
+            <ol className="flex list-decimal flex-col gap-2 pl-4 bc-type-body text-(--bc-on-surface)">
               <li>
                 In the browser you signed in with, add a cookies.txt export extension — search the extension store for
                 “Get cookies.txt”.
@@ -210,7 +212,7 @@ function SignInDialog({ auth, onClose }: { auth: YtAuthState; onClose: () => voi
 
         {step.kind === 'paste' && (
           <section className="flex flex-col gap-3 px-5 pt-2 pb-5">
-            <p className="type-body-tall text-secondary">
+            <p className="bc-type-body-lg text-(--bc-on-surface-variant)">
               Paste the cookies.txt contents, or choose the file. Either shape works — the whole file, or one raw
               Cookie line.
             </p>
@@ -240,7 +242,7 @@ function SignInDialog({ auth, onClose }: { auth: YtAuthState; onClose: () => voi
 
         {step.kind === 'verifying' && (
           <section className="px-5 pt-2 pb-5">
-            <p className="type-body-tall text-secondary">Checking with YouTube who this session belongs to…</p>
+            <p className="bc-type-body-lg text-(--bc-on-surface-variant)">Checking with YouTube who this session belongs to…</p>
           </section>
         )}
 
@@ -249,13 +251,13 @@ function SignInDialog({ auth, onClose }: { auth: YtAuthState; onClose: () => voi
             <div className="flex items-center gap-3">
               <Avatar src={step.state.active?.avatarUrl ?? null} name={step.state.active?.name ?? 'You'} size={44} />
               <div className="min-w-0">
-                <p className="truncate type-body-emphasized text-primary">{step.state.active?.name}</p>
-                <p className="truncate type-body-reduced text-secondary">
+                <p className="truncate bc-type-title-md text-(--bc-on-surface)">{step.state.active?.name}</p>
+                <p className="truncate bc-type-body text-(--bc-on-surface-variant)">
                   {step.state.accounts[0]?.email ?? step.state.active?.handle ?? null}
                 </p>
               </div>
             </div>
-            <p className="type-body-tall text-secondary">
+            <p className="bc-type-body-lg text-(--bc-on-surface-variant)">
               This is the account the session you pasted belongs to. Use it here?
             </p>
             <div className="flex gap-2">
@@ -273,7 +275,7 @@ function SignInDialog({ auth, onClose }: { auth: YtAuthState; onClose: () => voi
 
         {step.kind === 'failed' && (
           <section className="flex flex-col gap-4 px-5 pt-2 pb-5">
-            <p className="type-body-tall text-secondary">{step.message}</p>
+            <p className="bc-type-body-lg text-(--bc-on-surface-variant)">{step.message}</p>
             <button className={action} onClick={() => setStep({ kind: 'paste' })}>
               Try again
             </button>
@@ -294,11 +296,11 @@ function Connected({ state, onDone, onDisconnect }: { state: YtAuthState; onDone
       <div className="flex items-center gap-3">
         <Avatar src={active?.avatarUrl ?? null} name={active?.name ?? 'You'} size={44} />
         <div className="min-w-0">
-          <p className="truncate type-body-emphasized text-primary">{active?.name}</p>
-          <p className="truncate type-body-reduced text-secondary">{email ?? active?.handle ?? null}</p>
+          <p className="truncate bc-type-title-md text-(--bc-on-surface)">{active?.name}</p>
+          <p className="truncate bc-type-body text-(--bc-on-surface-variant)">{email ?? active?.handle ?? null}</p>
         </div>
       </div>
-      <p className="type-body-tall text-secondary">
+      <p className="bc-type-body-lg text-(--bc-on-surface-variant)">
         Your library, likes, history and recommendations play as yours from here on.
       </p>
       <div className="flex gap-2">

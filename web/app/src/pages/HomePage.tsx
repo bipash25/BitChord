@@ -71,7 +71,7 @@ export default function HomePage() {
   return (
     <>
       <PageHeader title="Home" />
-      {recent.length > 0 && <TrackShelf title={RECENT_TITLE} to="/library/recent" tracks={recent} source={RECENT_SOURCE} />}
+      {recent.length > 0 && <TrackShelf title={RECENT_TITLE} to="/history" tracks={recent} source={RECENT_SOURCE} />}
       <Shelves shelves={shelves} />
       <div ref={sentinel} />
       {home.isFetchingNextPage && <ShelfSkeleton kind="square" />}

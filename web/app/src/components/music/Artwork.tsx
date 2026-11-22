@@ -13,7 +13,7 @@ interface ArtworkProps {
   eager?: boolean;
 }
 
-const frame = 'relative isolate w-full overflow-hidden bg-joe artwork-stroke';
+const frame = 'relative isolate w-full overflow-hidden bg-(--bc-page-elevated,var(--bc-surface-variant)) bc-thumbnail-border';
 
 /**
  * Fixed-aspect artwork: a neutral placeholder until the image decodes, then a

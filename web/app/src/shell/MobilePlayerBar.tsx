@@ -98,7 +98,7 @@ export function MobilePlayerBar() {
           >
             <span
               ref={artRef}
-              className={`artwork-stroke relative h-(--bc-miniplayer-art) flex-none overflow-hidden rounded-(--bc-radius-art) bg-(--bc-surface-variant) ${
+              className={`bc-thumbnail-border relative h-(--bc-miniplayer-art) flex-none overflow-hidden rounded-(--bc-radius-art) bg-(--bc-surface-variant) ${
                 video ? 'w-[71px] bg-black' : 'w-(--bc-miniplayer-art)'
               }`}
             >

@@ -153,6 +153,7 @@ export function prefetchPageData(pathname: string): void {
   if (!id) {
     if (kind === 'home') void queryClient.prefetchInfiniteQuery(homeQuery());
     if (kind === 'new') void queryClient.prefetchQuery(exploreQuery());
+    if (kind === 'history' && ytAuthSnapshot().signedIn) void queryClient.prefetchInfiniteQuery(libraryQuery('recent'));
     return;
   }
   const decoded = decodeURIComponent(id);

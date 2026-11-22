@@ -1,41 +1,65 @@
 import { SkeletonBlock, SkeletonLine } from '@/components/Skeleton';
 
-const row = 'grid items-center border-t-[0.5px] border-t-divider last:border-b-[0.5px] last:border-b-divider';
+/**
+ * Android `SongListSkeleton` (`Skeletons.kt` / `Common.kt:512-649`):
+ * 60px rows, 52px art (8px corner) or 24px number column, 16px side gutters,
+ * and 0.5px dividers inset 84px / 56px.
+ */
+export function SongListSkeleton({ count = 10, numbered = false }: { count?: number; numbered?: boolean }) {
+  return (
+    <div aria-hidden="true">
+      {Array.from({ length: count }, (_, i) => (
+        <div key={i}>
+          <div className="flex items-center px-(--bc-page-gutter) py-1">
+            {numbered ? (
+              <div className="mr-(--bc-page-gutter) grid h-[52px] w-(--bc-track-number-w) shrink-0 place-items-center">
+                <SkeletonLine lineHeight={20} fontSize={14} width={14} />
+              </div>
+            ) : (
+              <div className="mr-3.5 shrink-0">
+                <SkeletonBlock width={52} height={52} radius="var(--bc-radius-art)" />
+              </div>
+            )}
+            <div className="flex min-w-0 flex-1 flex-col gap-1">
+              <SkeletonLine lineHeight={20} fontSize={15} width={`${36 + ((i * 29) % 36)}%`} />
+              <SkeletonLine lineHeight={17} fontSize={13} width={`${24 + ((i * 19) % 28)}%`} />
+            </div>
+            <SkeletonLine lineHeight={16} fontSize={12} width={32} style={{ marginLeft: 12 }} />
+          </div>
+          {i < count - 1 && (
+            <div
+              className="h-0 border-t-[0.5px] border-t-(--bc-outline)/50"
+              style={{ marginLeft: numbered ? 56 : 'var(--bc-queue-divider-inset)' }}
+            />
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
 
-/** Album and playlist pages: artwork header, then the track list. */
-export function DetailSkeleton({ rows = 12, rowArtwork = false }: { rows?: number; rowArtwork?: boolean }) {
+/** Android release detail skeleton: centered 76%/50vh sleeve, title, pills, and SongRows. */
+export function DetailSkeleton({ rows = 10, rowArtwork = false }: { rows?: number; rowArtwork?: boolean }) {
   return (
     <div aria-busy="true" aria-label="Loading">
-      <div
-        className="mx-(--body-gutter) mb-10 grid grid-cols-[auto_1fr] items-end gap-x-[34px] pt-[52px] max-sm:grid-cols-[1fr] max-sm:justify-items-center max-sm:gap-y-4 max-sm:pt-4"
-        aria-hidden="true"
-      >
-        <SkeletonBlock className="w-[270px] max-lg:w-[220px] max-sm:w-[min(270px,70vw)]" aspectRatio="1" radius="var(--radius-artwork-large)" />
-        <div className="flex flex-col pb-1 max-sm:items-center">
-          <SkeletonLine lineHeight={32} fontSize={26} width={260} />
-          <SkeletonLine lineHeight={32} fontSize={26} width={180} />
-          <SkeletonLine lineHeight={15} fontSize={12} width={90} style={{ marginTop: 4 }} />
-          <SkeletonLine lineHeight={18} fontSize={13} width="min(440px, 100%)" style={{ marginTop: 38 }} />
-          <SkeletonLine lineHeight={18} fontSize={13} width="min(380px, 90%)" />
-          <div className="mt-3.5 flex gap-3">
-            <SkeletonBlock width={100} height={36} radius={24} />
-            <SkeletonBlock width={100} height={36} radius={24} />
-          </div>
+      <div className="flex flex-col items-center pt-5 pb-[18px]" aria-hidden="true">
+        <SkeletonBlock
+          className="w-[min(76vw,50vh,340px)]"
+          aspectRatio="1"
+          radius="var(--bc-radius-sleeve)"
+        />
+        <div className="mt-5 flex flex-col items-center gap-1.5">
+          <SkeletonLine lineHeight={26} fontSize={22} width={220} />
+          <SkeletonLine lineHeight={22} fontSize={18} width={140} />
+          <SkeletonLine lineHeight={16} fontSize={12} width={160} />
+        </div>
+        <div className="mt-[18px] flex w-full max-w-[420px] items-center gap-3.5 px-6">
+          <SkeletonBlock width={50} height={50} radius="9999px" />
+          <SkeletonBlock className="flex-1" height={50} radius="9999px" />
+          <SkeletonBlock width={50} height={50} radius="9999px" />
         </div>
       </div>
-      <div className="mx-(--body-gutter)" aria-hidden="true">
-        {Array.from({ length: rows }, (_, i) => (
-          <div key={i} className={`${row} ${rowArtwork ? 'h-14 grid-cols-[52px_1fr_auto]' : 'h-[46px] grid-cols-[40px_1fr_auto]'}`}>
-            {rowArtwork ? (
-              <SkeletonBlock width={40} height={40} radius="var(--radius-artwork-small)" />
-            ) : (
-              <SkeletonLine lineHeight={16} fontSize={13} width={12} />
-            )}
-            <SkeletonLine lineHeight={16} fontSize={13} width={`${30 + ((i * 37) % 35)}%`} />
-            <SkeletonLine lineHeight={16} fontSize={13} width={30} style={{ marginRight: 35 }} />
-          </div>
-        ))}
-      </div>
+      <SongListSkeleton count={rows} numbered={!rowArtwork} />
     </div>
   );
 }

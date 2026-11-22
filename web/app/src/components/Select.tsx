@@ -31,13 +31,13 @@ export function Select<T extends string | number>({ value, options, onChange, la
     <>
       <button
         type="button"
-        className="inline-flex max-w-[240px] min-w-0 flex-none cursor-pointer items-center gap-1.5 rounded-[6px] bg-quaternary py-[3px] ps-2.5 pe-1.5 type-body text-primary transition-[background-color] duration-100 hover:brightness-125 aria-expanded:brightness-125"
+        className="inline-flex max-w-[240px] min-w-0 flex-none cursor-pointer items-center gap-1.5 rounded-[10px] bg-(--bc-tab-pill-bg) py-1.5 ps-3 pe-2 bc-type-body text-(--bc-on-surface) transition-opacity hover:opacity-85 aria-expanded:opacity-85"
         aria-haspopup="menu"
         aria-expanded={anchor !== null}
         onClick={(e) => setAnchor(anchor ? null : e.currentTarget)}
       >
         <span className="min-w-0 truncate">{current?.label ?? ''}</span>
-        <ChevronsUpDown size={13} strokeWidth={2.4} className="flex-none text-secondary" />
+        <ChevronsUpDown size={14} strokeWidth={2.2} className="flex-none text-(--bc-on-surface-variant)" />
       </button>
       {anchor && (
         <Menu anchor={anchor} onClose={close} label={label} matchWidth>

@@ -1,41 +1,40 @@
 /*
- * Grouped inset rows, the settings idiom the app uses elsewhere: the
- * Settings and Listen Together pages.
+ * Android iOS-grouped settings cards (`SettingsSheet.kt:2346-2705`, spec §6.11):
+ * 14px group cards on `--bc-surface-variant`, 16px inset, 52px min rows, 0.5px
+ * hairlines inset to text, and 11px uppercase section headers.
  */
 
-const row = 'relative flex items-center justify-between px-4 py-[11px] type-title-3 hairline-[16px]';
-const integration = 'relative grid items-center gap-x-3 px-4 py-[11px] type-title-3 hairline-[52px]';
-const field = 'w-[220px] flex-none rounded-[8px] border-0 bg-quaternary px-2.5 py-[5px] type-body text-primary';
+const row =
+  'relative flex min-h-[52px] items-center justify-between px-4 py-3 bc-type-body-lg text-(--bc-on-surface) hairline-[16px]';
+const integration =
+  'relative grid min-h-[52px] items-center gap-x-3.5 px-4 py-3 bc-type-body-lg text-(--bc-on-surface) hairline-[52px]';
+const field =
+  'h-10 w-[220px] flex-none rounded-(--bc-radius-field) border-0 bg-(--bc-bg) px-3 font-(family-name:--bc-font-family) text-[15px] text-(--bc-on-surface) placeholder:text-(--bc-on-surface-variant)';
 
 export const settingsUi = {
-  /** The page title and its rows as one column, centred in the page. */
-  centered: 'mx-auto max-w-[calc(640px+2*var(--body-gutter))]',
-  body: 'mx-(--body-gutter) mt-5 mb-[120px] max-w-[640px]',
-  group: 'overflow-hidden rounded-[10px] bg-quinary',
-  sectionHeader: 'mx-4 mt-7 mb-2 type-subhead-emphasized uppercase text-secondary',
-  footer: 'mx-4 mt-2 type-callout text-secondary',
+  centered: 'mx-auto max-w-[calc(640px+2*var(--bc-group-inset))]',
+  body: 'mx-(--bc-group-inset) mt-3.5 mb-[120px] max-w-[640px]',
+  group: 'overflow-hidden rounded-(--bc-radius-group) bg-(--bc-surface-variant)',
+  sectionHeader: 'mx-1 mt-[26px] mb-2 bc-type-label-sm uppercase text-(--bc-on-surface-variant)',
+  footer: 'mx-1 mt-2 bc-type-body text-(--bc-on-surface-variant)',
 
   row,
-  /** A row holding a switch, a select or a field: the whole row is its label. */
   controlRow: `${row} cursor-pointer gap-4`,
   rowText: 'flex flex-col gap-0.5',
-  rowDetail: 'type-callout text-secondary',
-  value: 'inline-flex items-center gap-1.5 text-right type-body-reduced text-secondary',
+  rowDetail: 'bc-type-body text-(--bc-on-surface-variant)',
+  value: 'inline-flex items-center gap-1.5 text-right bc-type-body-lg text-(--bc-on-surface-variant)',
 
-  /** Integration rows: a coloured app-icon square, the name, the state. */
   integration: `${integration} grid-cols-[24px_minmax(0,1fr)_auto]`,
-  /** An integration row without the icon square. */
   integrationPlain: `${integration} grid-cols-[minmax(0,1fr)_auto]`,
   integrationIcon: 'grid size-6 place-items-center rounded-[6px] text-white',
   integrationName: 'min-w-0',
-  /** Settings: an integration row that opens a page of its own. */
-  linkRow: 'w-full cursor-pointer text-start hover:bg-quaternary',
-  /** A row's own action, after its status (Connect, Disconnect). */
-  inlineButton: 'ml-2 rounded-[12px] bg-quaternary px-2.5 py-[3px] type-callout-emphasized text-primary disabled:opacity-50',
+  linkRow: 'w-full cursor-pointer text-start hover:bg-(--bc-hover-fill)',
+  inlineButton:
+    'ml-2 rounded-full bg-(--bc-tab-pill-bg) px-3 py-1 bc-type-label text-(--bc-on-surface) hover:opacity-85 disabled:opacity-45',
 
   switch: [
-    'relative h-[22px] w-[38px] flex-none cursor-pointer appearance-none rounded-[11px] bg-quaternary transition-[background-color] duration-200 checked:bg-green',
-    'after:absolute after:top-0.5 after:left-0.5 after:size-[18px] after:rounded-full after:bg-white after:shadow-[0_1px_3px_rgb(0_0_0/0.3)] after:transition-[translate] after:duration-200 checked:after:translate-x-4',
+    'relative h-7 w-12 flex-none cursor-pointer appearance-none rounded-full bg-(--bc-on-surface-variant)/30 transition-[background-color] duration-200 checked:bg-(--bc-green)',
+    'after:absolute after:top-0.5 after:left-0.5 after:size-6 after:rounded-full after:bg-white after:shadow-(--bc-shadow-thumb-switch) after:transition-[translate] after:duration-200 checked:after:translate-x-5',
   ].join(' '),
   input: field,
 };

@@ -9,24 +9,24 @@ interface BannerProps {
 }
 
 /**
- * The full-width key-colour band Apple pins under the player for signed-out
- * visitors (report §1). An invitation, not an error.
+ * Relay notice strip (`QueueActionNotice.kt`, spec §6.23): menu frost with
+ * 0.5px glass rim instead of Apple's red banner band.
  */
 export function Banner({ title, detail, action, onDismiss }: BannerProps) {
   return (
     <div
-      className="relative z-(--z-web-chrome) flex min-h-[71px] items-center gap-4 bg-key-bg px-[30px] py-3 text-white max-sm:pr-4 max-sm:pl-5"
+      className="bc-frost relative z-(--z-web-chrome) flex min-h-[64px] items-center gap-4 border-t-[0.5px] border-t-(--bc-glass-edge) px-(--bc-page-gutter) py-3 text-(--bc-on-surface) sm:px-7"
       role="region"
       aria-label={title}
     >
       <div className="min-w-0 flex-1">
-        <p className="type-title-2-emphasized max-sm:type-[700_15px/20px]">{title}</p>
-        <p className="mt-0.5 type-callout-medium opacity-90">{detail}</p>
+        <p className="bc-type-title-md">{title}</p>
+        <p className="mt-0.5 bc-type-body text-(--bc-on-surface-variant)">{detail}</p>
       </div>
       <div className="shrink-0">{action}</div>
       {onDismiss && (
         <button
-          className="-mr-3.5 grid size-7 place-items-center rounded-full text-white opacity-85 hover:bg-[#ffffff26] hover:opacity-100"
+          className="-mr-2 grid size-8 place-items-center rounded-full text-(--bc-on-surface-variant) hover:bg-(--bc-hover-fill)"
           onClick={onDismiss}
           aria-label="Dismiss"
         >
@@ -38,4 +38,4 @@ export function Banner({ title, detail, action, onDismiss }: BannerProps) {
 }
 
 export const bannerButtonClass =
-  'inline-flex h-8 items-center whitespace-nowrap rounded-pill bg-white px-4 type-body-emphasized text-black hover:bg-[#ffffffe0]';
+  'inline-flex h-8 items-center whitespace-nowrap rounded-full bg-(--bc-primary) px-4 bc-type-label text-(--bc-on-primary) hover:opacity-90';

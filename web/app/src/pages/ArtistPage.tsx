@@ -1,47 +1,45 @@
-import { useMemo, useState, type CSSProperties } from 'react';
+import { Shuffle, Users } from 'lucide-react';
+import { useMemo, useState } from 'react';
 import { useParams } from 'react-router';
 import { PlayIcon } from '@/components/icons/Transport';
 import { Artwork } from '@/components/music/Artwork';
 import { browseHref } from '@/components/music/links';
-import { playList } from '@/components/music/play';
+import { playList, shuffleList } from '@/components/music/play';
 import { Shelves, TrackShelf } from '@/components/music/ShelfView';
 import { LoadError, NeedsExtension } from '@/components/music/States';
-import { requestAppleAccess, useAppleArtistArt, useUngrantedAppleOrigins, type AppleArtistArt } from '@/data/apple/artistArt';
+import {
+  requestAppleAccess,
+  useAppleArtistArt,
+  useUngrantedAppleOrigins,
+  type AppleArtistArt,
+} from '@/data/apple/artistArt';
 import { useArtist, useYouTubeReady } from '@/data/music/queries';
-import type { ArtworkColor } from '@/lib/artworkColor';
+import { useArtworkPalette } from '@/lib/artworkPalette';
 import { usePageTint } from '@/lib/usePageTint';
 import { ArtistSkeleton } from '@/skeletons/PageSkeletons';
 
-function luminance(color: string): number {
-  const [r, g, b] = [1, 3, 5].map((i) => parseInt(color.slice(i, i + 2), 16) / 255);
-  return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
-}
-
 /**
- * The name, or Apple's title logo in its place (AppleArtistArt.kt). Until the
- * logo has drawn, the name stands in, so the header is never left empty; a
- * logo that fails to load leaves the name.
+ * The name, or Apple's title logo in its place (`DetailScreen.kt:1322-1448`):
+ * until the logo decodes, the name stands in so the header is never empty.
  */
 function ArtistName({ name, apple }: { name: string; apple: AppleArtistArt | null }) {
   const logo = apple?.logoUrl ?? null;
   const [shown, setShown] = useState<string | null>(null);
-  const logoShown = !!logo && shown === logo;
+  const logoShown = Boolean(logo) && shown === logo;
+
   return (
     <h1
-      className="type-header-emphasized text-[clamp(34px,5vw,64px)] leading-[1.05] [text-shadow:0_2px_20px_#00000059] data-logo:w-full data-logo:[text-shadow:none]"
+      className="px-6 text-center bc-type-display text-(--bc-page-on,var(--bc-on-surface)) [text-shadow:0_2px_18px_rgba(0,0,0,0.35)] data-logo:w-full data-logo:[text-shadow:none]"
       data-logo={logoShown || undefined}
     >
       {!logoShown && name}
       {logo && (
         <img
           key={logo}
-          // Apple's title logo in place of the name: at most 82% of the page's width and 30% of the
-          // photo's height (the photo is the column's width over 1.93, and never taller than 70vh).
-          className="mx-auto mt-0 mb-1.5 block h-auto max-h-[min(calc((100vw-var(--web-navigation-width))/1.93*0.3),21vh)] w-auto max-w-[min(82%,640px)] [filter:drop-shadow(0_2px_16px_#00000040)]"
+          className="mx-auto block h-auto max-h-[min(18vh,160px)] w-auto max-w-[min(82%,540px)] [filter:drop-shadow(0_2px_16px_rgba(0,0,0,0.28))]"
           src={logo}
           alt={logoShown ? name : ''}
           hidden={!logoShown}
-          // Its proportions are known before it decodes; the CSS caps its size.
           style={{ aspectRatio: String(apple!.logoAspect) }}
           decoding="async"
           onLoad={() => setShown(logo)}
@@ -52,10 +50,9 @@ function ArtistName({ name, apple }: { name: string; apple: AppleArtistArt | nul
 }
 
 /**
- * An artist (report §4): full-bleed hero with the name and Play, Top Songs,
- * then shelves. Where Apple Music has the artist, the page takes Apple's
- * header as the phone does: its photograph, its title logo over it, its
- * colour behind the whole page, and its colour on the Play button.
+ * Artist detail (`DetailScreen.kt:392-435, 1322-1997`, spec §6.6):
+ * full-bleed photo (0.95 aspect capped at 60vh) dissolving into `--bc-page-wash`,
+ * 70px Play circle + 52px Shuffle circle, 4-row Top Songs pager, shelves, and About + stats chip.
  */
 export default function ArtistPage() {
   const id = decodeURIComponent(useParams().id ?? '');
@@ -63,11 +60,14 @@ export default function ArtistPage() {
   const artist = useArtist(id);
   const apple = useAppleArtistArt(artist.data?.name);
   const appleUngranted = useUngrantedAppleOrigins();
-  const tint = useMemo<ArtworkColor | null>(
-    () => (apple ? { background: apple.background, dark: luminance(apple.background) < 0.6 } : null),
+  const [aboutExpanded, setAboutExpanded] = useState(false);
+
+  const keyColors = useMemo(
+    () => (apple ? { background: apple.background, accent: apple.keyColor ?? '#ffffff' } : null),
     [apple],
   );
-  usePageTint(tint);
+  const paletteResult = useArtworkPalette(apple?.heroUrl ?? artist.data?.heroImage, { keyColors });
+  usePageTint(paletteResult, { surface: 'wash' });
 
   if (missing) return <NeedsExtension />;
   if (artist.isError) return <LoadError error={artist.error} onRetry={() => void artist.refetch()} />;
@@ -75,13 +75,15 @@ export default function ArtistPage() {
 
   const data = artist.data;
   const topSongs = { title: `${data.name}: Top Songs`, type: 'artist' as const, id: data.id };
+  const canPlay = data.topSongs.length > 0;
+  const playFill = apple?.keyColor ?? '#ffffff';
+  const playInk = paletteResult.palette?.wash ?? 'var(--bc-bg)';
+
   return (
     <>
-      {/* The hero (report §4): full-bleed, ~1.93:1 of the content column, the name and actions centred near the bottom. */}
-      <header className="relative max-h-[70vh] overflow-hidden">
-        <div className="relative w-full">
-          <Artwork src={data.heroImage} displayWidth={1200} aspect={1165 / 604} eager />
-          {/* Apple's photograph fades in over YouTube's once it arrives. */}
+      <header className="relative overflow-hidden max-lg:-mt-[calc(env(safe-area-inset-top,0px)+var(--bc-topbar-h))]">
+        <div className="relative w-full aspect-[0.95] max-h-[60vh]">
+          <Artwork src={data.heroImage} displayWidth={1200} aspect={0.95} className="size-full" radius={0} eager />
           {apple && (
             <img
               key={apple.heroUrl}
@@ -92,38 +94,49 @@ export default function ArtistPage() {
               onLoad={(e) => e.currentTarget.setAttribute('data-loaded', '')}
             />
           )}
+          {/* Eased multi-stop dissolve into --bc-page-wash (DetailScreen.kt:1543-1549). */}
+          <div
+            className="pointer-events-none absolute inset-0"
+            style={{
+              background:
+                'linear-gradient(180deg, transparent 45%, color-mix(in srgb, var(--bc-page-surface, var(--bc-bg)) 30%, transparent) 65%, color-mix(in srgb, var(--bc-page-surface, var(--bc-bg)) 72%, transparent) 82%, color-mix(in srgb, var(--bc-page-surface, var(--bc-bg)) 95%, transparent) 94%, var(--bc-page-surface, var(--bc-bg)) 100%)',
+            }}
+            aria-hidden="true"
+          />
         </div>
-        {/* The image melts into the page at the bottom (Apple's masked blur frame), into Apple's colour when the page is tinted with it. */}
-        <div
-          className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,transparent_45%,color-mix(in_srgb,var(--page-tint,var(--pageBG))_70%,transparent)_80%,var(--page-tint,var(--pageBG))_100%)]"
-          aria-hidden="true"
-        />
-        <div className="absolute inset-x-0 bottom-6 flex flex-col items-center gap-1.5 px-(--body-gutter) text-center">
+
+        <div className="relative -mt-12 flex flex-col items-center pb-5">
           <ArtistName name={data.name} apple={apple} />
-          {data.audience && <p className="type-callout-emphasized text-secondary">{data.audience}</p>}
-          <button
-            // The 56px key-colour play button.
-            className="mt-2.5 grid size-14 place-items-center rounded-full bg-(--play-fill,var(--keyColorBG)) text-(--play-glyph,#fff) shadow-[0_2px_6px_-4px_#0006,inset_0_0_2px_#ffffff1a] disabled:opacity-40 enabled:hover:scale-[1.04]"
-            // Apple's fill for the Play circle, with the triangle in the page's colour,
-            // as the phone cuts it out of the circle; white without a key colour.
-            style={
-              apple
-                ? ({ '--play-fill': apple.keyColor ?? '#ffffff', '--play-glyph': apple.background } as CSSProperties)
-                : undefined
-            }
-            aria-label={`Play ${data.name}`}
-            disabled={!data.topSongs.length}
-            onClick={() => playList(data.topSongs, 0, { source: topSongs })}
-          >
-            <PlayIcon size={26} />
-          </button>
+
+          <div className="mt-4 flex items-center justify-center gap-6 px-6">
+            <button
+              type="button"
+              className="grid size-[52px] place-items-center rounded-full border border-[color-mix(in_srgb,var(--bc-page-on,var(--bc-on-surface))_14%,transparent)] bg-[color-mix(in_srgb,var(--bc-page-on,var(--bc-on-surface))_8%,transparent)] text-(--bc-page-on,var(--bc-on-surface)) transition-transform active:scale-95 disabled:opacity-38"
+              aria-label={`Shuffle ${data.name}`}
+              disabled={!canPlay}
+              onClick={() => shuffleList(data.topSongs, { source: topSongs })}
+            >
+              <Shuffle size={22} strokeWidth={2.2} />
+            </button>
+
+            <button
+              type="button"
+              className="grid size-(--bc-artist-play) place-items-center rounded-full shadow-[0_4px_16px_rgba(0,0,0,0.22)] transition-transform active:scale-95 enabled:hover:scale-[1.03] disabled:opacity-40"
+              style={{ backgroundColor: playFill, color: playInk }}
+              aria-label={`Play ${data.name}`}
+              disabled={!canPlay}
+              onClick={() => playList(data.topSongs, 0, { source: topSongs })}
+            >
+              <PlayIcon size={36} />
+            </button>
+          </div>
+
           {!apple && appleUngranted.length > 0 && (
-            // The lyrics panel's permission notice, as a pill over the photograph.
-            <div className="mt-3 flex items-center gap-2.5 rounded-[999px] bg-[#0000004d] py-1.5 pr-2 pl-3.5 type-callout text-[#ffffffcc] [backdrop-filter:blur(20px)_saturate(1.6)]">
+            <div className="bc-frost mt-4 flex items-center gap-2.5 rounded-full py-1.5 pr-2 pl-3.5 bc-type-label text-(--bc-glass-content)">
               <span>Apple Music artist art needs the server relay’s permission.</span>
               <button
-                className="flex-none rounded-[999px] bg-[#ffffff26] px-2.5 py-1 type-callout-emphasized text-white hover:bg-[#ffffff40]"
-                // Stays until the transport confirms the grant (checked when this tab comes back).
+                type="button"
+                className="flex-none rounded-full bg-white/20 px-2.5 py-1 bc-type-label-sm hover:bg-white/30"
                 onClick={requestAppleAccess}
               >
                 Allow
@@ -144,10 +157,39 @@ export default function ArtistPage() {
 
       <Shelves shelves={data.shelves} />
 
-      {data.description && (
-        <section className="mx-(--body-gutter) mt-3 mb-10" aria-label={`About ${data.name}`}>
-          <h2 className="type-title-2-emphasized">About {data.name}</h2>
-          <p className="mt-2 max-w-[720px] type-body-tall whitespace-pre-line text-secondary">{data.description}</p>
+      {(data.description || data.audience) && (
+        <section className="mx-(--bc-page-gutter) mt-7 mb-10" aria-label={`About ${data.name}`}>
+          <h2 className="mb-1.5 bc-type-title-md text-(--bc-page-on,var(--bc-on-surface))">
+            About {data.name}
+          </h2>
+          {data.description && (
+            <>
+              <p
+                className={`max-w-[720px] bc-type-body-lg text-(--bc-page-on-variant,var(--bc-on-surface-variant)) ${
+                  aboutExpanded ? 'whitespace-pre-line' : 'line-clamp-2'
+                }`}
+              >
+                {data.description}
+              </p>
+              {data.description.length > 120 && (
+                <button
+                  type="button"
+                  className="mt-1 py-1 bc-type-label text-(--bc-page-accent,var(--bc-primary)) hover:underline"
+                  onClick={() => setAboutExpanded((v) => !v)}
+                >
+                  {aboutExpanded ? 'Less' : 'More'}
+                </button>
+              )}
+            </>
+          )}
+          {data.audience && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              <span className="bc-glass inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 bc-type-label text-(--bc-page-on-variant,var(--bc-on-surface-variant))">
+                <Users size={15} />
+                <span>{data.audience}</span>
+              </span>
+            </div>
+          )}
         </section>
       )}
     </>

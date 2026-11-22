@@ -18,15 +18,14 @@ import { useUi } from '@/state/ui';
 import { Lcd } from './Lcd';
 import { fadeForVolume, VolumeControl } from './VolumeControl';
 
-const control = 'grid place-items-center rounded-[6px] disabled:opacity-40';
-// Shuffle and repeat: secondary, and the key colour when on, as Apple's toggles.
-const toggle = `${control} size-7 text-secondary aria-pressed:text-key`;
-const transport = `${control} size-7 text-primary`;
-const action = 'grid h-7 w-6 place-items-center rounded-[4px] text-primary aria-pressed:text-key';
+const control = 'grid place-items-center rounded-[8px] disabled:opacity-40';
+const toggle = `${control} size-7 text-(--bc-on-surface-variant) aria-pressed:text-(--bc-primary)`;
+const transport = `${control} size-7 text-(--bc-on-surface)`;
+const action = 'grid h-7 w-6 place-items-center rounded-[6px] text-(--bc-on-surface) aria-pressed:text-(--bc-primary)';
 // The actions the volume level slides in over: they fade out while it's open.
 const fading = `${action} ${fadeForVolume}`;
 
-/** The floating glass player pill (report §1). */
+/** Desktop floating frost capsule (`MiniPlayer` / spec §6.16). */
 export function PlayerBar() {
   const sidePanel = useUi((s) => s.sidePanel);
   const toggleSidePanel = useUi((s) => s.toggleSidePanel);
@@ -47,11 +46,11 @@ export function PlayerBar() {
   return (
     // The side panel overlays the page; the pill re-centres in what's left.
     <div
-      className="pointer-events-none absolute right-0 bottom-(--player-bottom-offset) left-(--web-navigation-width) z-[calc(var(--z-web-chrome)-1)] flex justify-center px-5 transition-[padding-inline-end] duration-(--duration-panel) ease-panel data-[panel-open=true]:pe-[calc(var(--side-panel-width)+20px)] max-lg:hidden"
+      className="pointer-events-none absolute right-0 bottom-(--bc-pill-bottom) left-(--bc-sidebar-w) z-[calc(var(--z-web-chrome)-1)] flex justify-center px-5 transition-[padding-inline-end] duration-250 ease-out data-[panel-open=true]:pe-[calc(var(--bc-sidepanel-w)+20px)] max-lg:hidden"
       data-panel-open={sidePanel !== null}
     >
       <div
-        className="glass-pill group/pill pointer-events-auto relative grid h-(--player-pill-height) w-[min(668px,100%)] grid-cols-[184px_minmax(180px,427px)_minmax(57px,auto)] items-center rounded-pill px-4"
+        className="bc-frost group/pill pointer-events-auto relative grid h-(--bc-miniplayer-h) w-[min(668px,100%)] grid-cols-[184px_minmax(180px,427px)_minmax(57px,auto)] items-center rounded-full px-4 shadow-(--bc-shadow-glass)"
         role="region"
         aria-label="Player"
       >

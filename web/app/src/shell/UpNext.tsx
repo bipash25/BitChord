@@ -7,11 +7,10 @@ import { formatDuration } from '@/components/music/links';
 import { autoplaySectionStart, upcomingUserQueueIndices, type QueueEntry } from '@/playback/queue/timeline';
 import { CROSSFADE_CHOICES, usePlayer } from '@/state/player';
 
-// The panel's square buttons: AutoPlay (the key colour when on) and the options menu.
-const square = 'grid size-7 place-items-center rounded-[6px] text-secondary hover:bg-quinary aria-pressed:text-key';
+const square =
+  'grid size-7 place-items-center rounded-[8px] text-(--bc-on-surface-variant) hover:bg-(--bc-hover-fill) aria-pressed:text-(--bc-primary)';
 const list = 'flex flex-col';
 
-/** A row: 55px, [art] 40px [title] 1fr [right] 40px, gap 12px, radius 6px; a key-colour line where a drag would drop. */
 function Row({
   entry,
   at,
@@ -33,7 +32,7 @@ function Row({
 
   return (
     <li
-      className="group/row relative grid h-[55px] grid-cols-[40px_minmax(0,1fr)_40px] items-center gap-x-3 rounded-row px-2.5 hover:bg-quinary data-dragging:opacity-40 data-over:before:absolute data-over:before:inset-x-2.5 data-over:before:-top-px data-over:before:border-t-2 data-over:before:border-t-key"
+      className="group/row relative grid min-h-[56px] grid-cols-[44px_minmax(0,1fr)_auto] items-center gap-x-3 rounded-(--bc-radius-row-press) px-2.5 py-1 hover:bg-(--bc-hover-fill) data-dragging:opacity-40 data-over:before:absolute data-over:before:inset-x-2.5 data-over:before:-top-px data-over:before:border-t-2 data-over:before:border-t-(--bc-primary)"
       data-over={over || undefined}
       data-dragging={dragging || undefined}
       draggable
@@ -53,11 +52,10 @@ function Row({
       }}
       onDoubleClick={() => jumpTo(at)}
     >
-      <div className="relative size-10">
-        <Artwork src={track.thumbnail} displayWidth={40} radius="var(--radius-artwork-small)" />
-        {/* The ✕ over the artwork's top-left, on hover. */}
+      <div className="relative size-11">
+        <Artwork src={track.thumbnail} displayWidth={44} radius="var(--bc-radius-art)" />
         <button
-          className="absolute -top-1.5 -left-1.5 hidden size-[22px] place-items-center rounded-full bg-thick-material text-primary shadow-[0_1px_3px_#0004] [backdrop-filter:blur(10px)] group-hover/row:grid"
+          className="bc-frost absolute -top-1.5 -left-1.5 hidden size-[22px] place-items-center rounded-full text-(--bc-glass-content) shadow-[0_1px_3px_#0004] group-hover/row:grid"
           aria-label={`Remove ${track.title}`}
           onClick={() => removeAt(at)}
         >
@@ -65,13 +63,17 @@ function Row({
         </button>
       </div>
       <button className="flex min-w-0 flex-col text-start" onClick={() => jumpTo(at)} aria-label={`Play ${track.title}`}>
-        <span className="truncate type-body text-primary">{track.title}</span>
-        <span className="truncate type-body text-secondary">{track.artists.map((a) => a.name).join(', ')}</span>
+        <span className="truncate bc-type-title-md text-(--bc-on-surface)">{track.title}</span>
+        <span className="truncate bc-type-body text-(--bc-on-surface-variant)">
+          {track.artists.map((a) => a.name).join(', ')}
+        </span>
       </button>
       <div className="relative grid items-center justify-items-end">
-        <span className="type-body tabular-nums text-secondary group-hover/row:invisible group-has-[[data-open]]/row:invisible">{formatDuration(track.durationSec)}</span>
+        <span className="bc-type-label tabular-nums text-(--bc-on-surface-variant) group-hover/row:invisible group-has-[[data-open]]/row:invisible">
+          {formatDuration(track.durationSec)}
+        </span>
         <button
-          className="absolute inset-y-0 right-0 my-auto hidden size-7 place-items-center rounded-full text-key group-hover/row:grid data-open:grid"
+          className="absolute inset-y-0 right-0 my-auto hidden size-8 place-items-center rounded-full text-(--bc-on-surface-variant) hover:bg-(--bc-hover-fill) group-hover/row:grid data-open:grid"
           aria-label={`More options for ${track.title}`}
           aria-haspopup="menu"
           data-open={anchor !== null || undefined}
@@ -145,9 +147,9 @@ export function UpNext() {
   return (
     <>
       <div className="flex items-center gap-1.5 px-5 pt-[23px] pb-3">
-        <h3 className="flex-1 type-title-2-emphasized">Up Next</h3>
+        <h3 className="flex-1 bc-type-title text-(--bc-on-surface)">Up Next</h3>
         {canClear && (
-          <button className="mr-1 type-title-3 text-key" onClick={clearUpNext}>
+          <button className="mr-1 bc-type-body font-semibold text-(--bc-primary)" onClick={clearUpNext}>
             Clear
           </button>
         )}
@@ -177,11 +179,15 @@ export function UpNext() {
           </Menu>
         )}
       </div>
-      {playingFrom && <p className="truncate px-5 pb-2 type-callout text-secondary">Playing from {playingFrom}</p>}
+      {playingFrom && (
+        <p className="truncate px-5 pb-2 bc-type-body text-(--bc-on-surface-variant)">
+          Playing from {playingFrom}
+        </p>
+      )}
 
       {upcoming.length === 0 ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 pb-20 text-center type-callout text-secondary">
-          <p className="type-callout-emphasized">Nothing in Up Next</p>
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 pb-20 text-center bc-type-body text-(--bc-on-surface-variant)">
+          <p className="bc-type-title-md text-(--bc-on-surface)">Nothing in Up Next</p>
           <p>
             {autoplay && repeat === 'off' && index >= 0
               ? 'AutoPlay is finding similar music.'
@@ -193,10 +199,12 @@ export function UpNext() {
           <ol className={list}>{rows(beforeAutoplay)}</ol>
           {afterAutoplay.length > 0 && (
             <>
-              <h4 className="mx-2.5 mt-[18px] mb-0.5 flex items-center gap-1.5 type-callout-emphasized">
+              <h4 className="mx-2.5 mt-[18px] mb-0.5 flex items-center gap-1.5 bc-type-label text-(--bc-on-surface)">
                 <InfinityIcon size={14} strokeWidth={2.4} /> AutoPlay
               </h4>
-              <p className="mx-2.5 mb-2 type-callout text-secondary">Similar music, from YouTube Music’s radio.</p>
+              <p className="mx-2.5 mb-2 bc-type-body text-(--bc-on-surface-variant)">
+                Similar music, from YouTube Music’s radio.
+              </p>
               <ol className={list}>{rows(afterAutoplay)}</ol>
             </>
           )}

@@ -124,9 +124,9 @@ export function AppShell() {
           {/* The page scrolls under the fixed sidebar and floating bars. */}
           <main
             id="scrollable-page"
-            className="absolute inset-0 overflow-x-hidden overflow-y-auto bg-(--bc-bg) pl-(--web-navigation-width) [scrollbar-gutter:stable] data-tint:bg-(--page-tint) data-tint:transition-[background-color] data-tint:duration-300 data-tint:ease-in max-lg:pt-[calc(env(safe-area-inset-top,0px)+var(--bc-topbar-h))] max-lg:pl-0"
+            className="absolute inset-0 overflow-x-hidden overflow-y-auto bg-(--bc-bg) pl-(--bc-sidebar-w) [scrollbar-gutter:stable] data-tint:bg-(--bc-page-surface) max-lg:pt-[calc(env(safe-area-inset-top,0px)+var(--bc-topbar-h))] max-lg:pl-0"
           >
-            <div className="min-h-full pb-[calc(var(--player-pill-height)+var(--player-bottom-offset)+40px)] max-lg:pb-[calc(var(--bc-bottom-inset)+var(--bc-tabbar-lift)+var(--bc-tabbar-h)+var(--bc-miniplayer-h)+32px)]">
+            <div className="min-h-full pb-[calc(var(--bc-miniplayer-h)+var(--bc-pill-bottom)+40px)] max-lg:pb-[calc(var(--bc-bottom-inset)+var(--bc-tabbar-lift)+var(--bc-tabbar-h)+var(--bc-miniplayer-h)+32px)]">
               <Outlet />
             </div>
           </main>
