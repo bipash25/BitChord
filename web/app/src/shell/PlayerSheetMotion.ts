@@ -13,6 +13,9 @@ export const DOCK_FADE_LEAD = 0.15;
 /** Minimum opacity floor while docking (NowPlayingScreen.kt:495). */
 export const DOCK_FADE_FLOOR = 1 / 255;
 
+/** How long a sheet waits for initial mount/layout before open spring starts anyway (PlayerSheetMotion.kt:42). */
+export const LAYOUT_WAIT_MS = 300;
+
 /** Top drag-to-dismiss handle strip height (NowPlayingScreen.kt:271). */
 export const DISMISS_STRIP_HEIGHT = 32;
 
@@ -127,6 +130,8 @@ export class PlayerSheetController {
   private reducedMotion = false;
   private raf = 0;
   private lastTick = 0;
+  private awaitingLayout = false;
+  private layoutTimer: ReturnType<typeof setTimeout> | null = null;
 
   private pullStartAt = 0;
   private pullStartMs = 0;
@@ -213,6 +218,9 @@ export class PlayerSheetController {
     this.sheetEl = el;
     this.contentEl = contentEl;
     this.applyDom();
+    if (el && this.awaitingLayout) {
+      queueMicrotask(() => this.tryStartAwaitedOpen());
+    }
   }
 
   registerMiniArt(el: HTMLElement | null, radius = 8) {
@@ -233,6 +241,9 @@ export class PlayerSheetController {
       if (r) this.cachedOpenRect = r;
     }
     this.applyDom();
+    if (el && this.awaitingLayout) {
+      queueMicrotask(() => this.tryStartAwaitedOpen());
+    }
   }
 
   registerDockClone(el: HTMLElement | null) {
@@ -257,7 +268,24 @@ export class PlayerSheetController {
     this.onShownChange?.(next);
   }
 
+  private clearLayoutWait() {
+    this.awaitingLayout = false;
+    if (this.layoutTimer !== null) {
+      clearTimeout(this.layoutTimer);
+      this.layoutTimer = null;
+    }
+  }
+
+  private tryStartAwaitedOpen() {
+    if (!this.awaitingLayout || this.phase !== 'opening' || !this.sheetEl) return;
+    this.clearLayoutWait();
+    this.refreshRects();
+    this.applyDom();
+    this.animateTo(0);
+  }
+
   private stopSpring() {
+    this.clearLayoutWait();
     if (this.raf) {
       cancelAnimationFrame(this.raf);
       this.raf = 0;
@@ -299,10 +327,25 @@ export class PlayerSheetController {
     this.offset = travel;
     this.velocity = 0;
     this.phase = 'opening';
+    this.awaitingLayout = !this.sheetEl;
     this.setShown(true);
     this.applyDom();
     this.emit();
-    this.animateTo(0);
+
+    if (this.sheetEl) {
+      this.awaitingLayout = false;
+      this.animateTo(0);
+    } else {
+      // Wait up to LAYOUT_WAIT_MS for the lazy FullScreenPlayer sheet + artwork to mount
+      // before stepping the spring so frame 1 never runs unseen (PlayerSheetMotion.kt:195).
+      this.layoutTimer = setTimeout(() => {
+        if (!this.awaitingLayout || this.phase !== 'opening') return;
+        this.clearLayoutWait();
+        this.refreshRects();
+        this.applyDom();
+        this.animateTo(0);
+      }, LAYOUT_WAIT_MS);
+    }
   }
 
   /**

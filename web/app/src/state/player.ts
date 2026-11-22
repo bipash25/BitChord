@@ -79,6 +79,8 @@ interface PlayerState extends Settings {
   playTracks: (tracks: Track[], startIndex: number, source: QueueSource) => void;
   /** Plays one song on its own (search, home); AutoPlay carries on after it. */
   playTrack: (track: Track, source: QueueSource) => void;
+  /** Starts a YouTube Music radio station seeded on [track] (SongActionsMenu.kt:313-318). */
+  startRadio: (track: Track) => void;
   /** Plays a bare video id (the Debug page). */
   playVideo: (videoId: string, hint?: Partial<Omit<NowPlaying, 'videoId'>>) => Promise<void>;
   playNext: (tracks: Track[], source?: QueueSource | null) => void;
@@ -467,6 +469,31 @@ export const usePlayer = create<PlayerState>()((set, get) => ({
     set({ queue: buildOneOffQueue(queue, index, track, source) });
     void startAt(0);
     intent();
+  },
+
+  startRadio(track) {
+    const state = get();
+    const radioSource: QueueSource = {
+      title: `${track.title || 'Track'} Radio`,
+      type: 'radio',
+      id: `RDAMVM${track.videoId}`,
+    };
+    exhaustedSeeds.delete(track.videoId);
+    autoplaySeed = null;
+    if (!state.autoplay) {
+      set({ autoplay: true });
+      saveSettings({ ...get(), autoplay: true });
+    }
+    const current = state.queue[state.index];
+    if (current && current.track.videoId === track.videoId && state.nowPlaying?.videoId === track.videoId) {
+      canonical = null;
+      set({ queue: state.queue.slice(0, state.index + 1) });
+      void refillAutoplay(true);
+      intent();
+    } else {
+      get().playTrack(track, radioSource);
+    }
+    showToast(`Started radio`);
   },
 
   async playVideo(videoId, hint = {}) {
@@ -1006,6 +1033,13 @@ function followVideo() {
 }
 
 const endedListeners = new Set<() => void>();
+let afterTrackStopHook: (() => boolean) | null = null;
+
+/** Registers a one-shot hook (Sleep Timer "after this song") to pause at track end instead of advancing. */
+export function setAfterTrackStopHook(hook: (() => boolean) | null): void {
+  afterTrackStopHook = hook;
+}
+
 /** Called when the track in front plays to its end, before the queue moves on; a repeat-one loop included. */
 export function onTrackEnded(listener: () => void): () => void {
   endedListeners.add(listener);
@@ -1029,6 +1063,10 @@ function bindElement(deck: Deck, n: number) {
   element.addEventListener('ended', () => {
     if (!inFront() || holding) return;
     endedListeners.forEach((listener) => listener());
+    if (afterTrackStopHook?.()) {
+      usePlayer.setState({ status: 'paused' });
+      return;
+    }
     // The track ran out before the crossfade's next one could start: give up
     // on the fade and play the next track here. Waiting on it was silence for
     // as long as that load took, which on a slow or failing load (each client

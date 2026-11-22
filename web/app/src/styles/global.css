@@ -182,14 +182,19 @@
   }
 }
 
-/* Progressive continuous/squircle corners (ContinuousCornerShape.kt:143, SquirclePillShape.kt:32). */
+/*
+ * Progressive continuous/squircle corners (ContinuousCornerShape.kt:143, SquirclePillShape.kt:32).
+ * CSS `corner-shape: superellipse(K)` uses curvature exponent `2^K` (1 = round/circle, 2 = squircle):
+ * - iOS ~60% corner smoothing maps softly around K = 1.5 (n ≈ 2.83), never K = 5 (n = 32, near-square).
+ * - SquirclePillShape's `n = 2.1` maps to K = log2(2.1) ≈ 1.07.
+ */
 @utility bc-continuous {
-  corner-shape: superellipse(5);
+  corner-shape: superellipse(1.5);
 }
 
 @utility bc-pill-squircle {
   border-radius: 9999px;
-  corner-shape: superellipse(2.1);
+  corner-shape: superellipse(1.07);
 }
 
 /*

@@ -54,6 +54,9 @@ describe('tabIndexForPath', () => {
 describe('FloatingTabBar', () => {
   it('renders Home, Explore, Library and Search with the active tab marked', () => {
     renderAt('/new');
+    const nav = mount.querySelector('nav[aria-label="Primary"]');
+    expect(nav?.className).toContain('rounded-full');
+    expect(nav?.className).not.toContain('bc-pill-squircle');
     const tabs = [...mount.querySelectorAll('[role="tab"]')];
     expect(tabs.map((t) => t.textContent)).toEqual(['Home', 'Explore', 'Library', 'Search']);
     expect(tabs[1]?.getAttribute('aria-selected')).toBe('true');

@@ -8,6 +8,7 @@ import { Artwork } from './Artwork';
 import { ExplicitBadge } from './ExplicitBadge';
 import { artistHref, formatDuration } from './links';
 import { PlayingBars } from './PlayingBars';
+import { SongInfoDialog } from './SongInfoDialog';
 import { TrackMenu, TrackMenuItems } from './TrackMenu';
 
 export const SWIPE_COMMIT_FRACTION = 0.45;
@@ -104,6 +105,7 @@ export function SongRow({
     startY: 0,
   });
   const [held, setHeld] = useState<{ open: boolean; bounds: HeldBounds } | null>(null);
+  const [infoOpen, setInfoOpen] = useState(false);
 
   const cancelLongPress = useCallback(() => {
     if (longPressRef.current.timer !== null) {
@@ -405,9 +407,16 @@ export function SongRow({
               {renderRowBody(false)}
             </div>
           }
-          actions={<TrackMenuItems track={resolvedTrack} onClose={dismissHeldMenu} />}
+          actions={
+            <TrackMenuItems
+              track={resolvedTrack}
+              onClose={dismissHeldMenu}
+              onOpenInfo={() => setInfoOpen(true)}
+            />
+          }
         />
       )}
+      {infoOpen && <SongInfoDialog track={resolvedTrack} onClose={() => setInfoOpen(false)} />}
     </div>
   );
 }

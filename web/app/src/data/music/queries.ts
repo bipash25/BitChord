@@ -27,6 +27,7 @@ import {
   fetchSearch,
   fetchSuggestions,
   setListSaved,
+  setTrackDisliked,
   setTrackLiked,
   type LikeStatus,
   type Paged,
@@ -225,6 +226,22 @@ export function useSetLiked() {
       void queryClient.invalidateQueries({ queryKey: ['music', 'library', 'songs'] });
       void queryClient.invalidateQueries({ queryKey: ['music', 'playlist', LIKED_MUSIC_PLAYLIST] });
       void queryClient.invalidateQueries({ queryKey: ['music', 'playlist', `VL${LIKED_MUSIC_PLAYLIST}`] });
+    },
+  });
+}
+
+/** Dislike or clear dislike, optimistic with rollback on error (SongActionsMenu.kt:226-233). */
+export function useSetDisliked() {
+  return useMutation({
+    mutationFn: ({ videoId, disliked }: { videoId: string; disliked: boolean }) => setTrackDisliked(videoId, disliked),
+    onMutate: ({ videoId, disliked }) => {
+      const previous = queryClient.getQueryData<LikeStatus>(likeKey(videoId));
+      queryClient.setQueryData<LikeStatus>(likeKey(videoId), disliked ? 'DISLIKE' : 'INDIFFERENT');
+      return { previous };
+    },
+    onError: (_error, { videoId }, context) => queryClient.setQueryData(likeKey(videoId), context?.previous),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['music', 'library', 'songs'] });
     },
   });
 }

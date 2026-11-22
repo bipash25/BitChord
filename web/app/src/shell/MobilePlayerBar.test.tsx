@@ -68,6 +68,9 @@ describe('MobilePlayerBar', () => {
     renderBar();
     const region = mount.querySelector('[role="region"]');
     expect(region).not.toBeNull();
+    const capsule = region?.querySelector('.bc-frost');
+    expect(capsule?.className).toContain('rounded-full');
+    expect(capsule?.className).not.toContain('bc-pill-squircle');
     expect(region?.textContent).toContain('Midnight City');
     expect(region?.textContent).toContain('M83');
     expect(mount.querySelector('button[aria-label="Pause"]')).not.toBeNull();

@@ -89,7 +89,7 @@ export function MobilePlayerBar() {
     >
       <div
         ref={liftRef}
-        className="bc-frost bc-pill-squircle size-full text-(--bc-glass-content) shadow-(--bc-shadow-glass) will-change-transform"
+        className="bc-frost size-full rounded-full text-(--bc-glass-content) shadow-(--bc-shadow-glass) will-change-transform"
       >
         <div className="grid h-full grid-cols-[minmax(0,1fr)_auto] items-center gap-(--bc-miniplayer-transport-gap) px-3 py-2">
           <button

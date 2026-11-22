@@ -22,7 +22,19 @@ import { VideoSurface } from '@/components/music/VideoSurface';
 import { albumHref } from '@/components/music/links';
 import { useTrackMotion } from '@/data/apple/motionArt';
 import { sizedArtwork } from '@/lib/artwork';
+import {
+  FADE_CURVE_STOPS,
+  HERO_FADE_FRACTION,
+  SUBVIEW_STATUS_SCRIM_MIN_ALPHA,
+  heroBlurDissolveMask,
+  heroDissolveMask,
+  sampleTopBandLuminance,
+  topBandScrimAlpha,
+  topScrimGradient,
+  verticalEdgeFadeMask,
+} from '@/lib/fadeCurve';
 import { useReducedMotion } from '@/lib/motionPrefs';
+import type { Track } from '@/data/music/types';
 import { usePlayer } from '@/state/player';
 import { useUi } from '@/state/ui';
 import { useHasVideo, useVideo } from '@/state/video';
@@ -233,12 +245,15 @@ export function FullScreenPlayer() {
   const [volumeOpen, setVolumeOpen] = useState(false);
   const [scrubbing, setScrubbing] = useState(false);
   const [seamY, setSeamY] = useState(0);
+  const [heroBottomPx, setHeroBottomPx] = useState(0);
+  const [topLuminance, setTopLuminance] = useState<number | null>(null);
   const [titleOverflows, setTitleOverflows] = useState(false);
 
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const heroSlotRef = useRef<HTMLDivElement>(null);
   const openArtRef = useRef<HTMLDivElement>(null);
   const enteredBrowserFullScreen = useRef(false);
   const browserFullScreen = useBrowserFullScreen();
@@ -257,6 +272,22 @@ export function FullScreenPlayer() {
     if (video && !picked.current) setPanel(null);
   }, [video]);
 
+  // Sample top 10% artwork luminance for the top status-bar gradient scrim (ArtworkPalette.kt:288-324).
+  useEffect(() => {
+    const url = nowPlaying?.artworkUrl;
+    if (!url) {
+      setTopLuminance(null);
+      return;
+    }
+    let live = true;
+    void sampleTopBandLuminance(url).then((lum) => {
+      if (live) setTopLuminance(lum);
+    });
+    return () => {
+      live = false;
+    };
+  }, [nowPlaying?.artworkUrl]);
+
   const handleClose = useCallback(() => {
     if (sheet) sheet.close();
     else setFullScreen(false);
@@ -269,39 +300,49 @@ export function FullScreenPlayer() {
     return () => sheet.registerSheet(null, null);
   }, [sheet]);
 
+  const fullBleedHero =
+    !viewport.landscape &&
+    viewport.w <= 620 &&
+    !column &&
+    !theater &&
+    !video &&
+    Boolean(nowPlaying?.artworkUrl);
   const portraitMainArt = !viewport.landscape && !column && !theater;
   const desktopArtVisible = viewport.landscape && !theater;
 
   useLayoutEffect(() => {
     if (!sheet) return;
-    const target = (portraitMainArt || desktopArtVisible) ? openArtRef.current : null;
-    sheet.registerOpenArt(target, 12);
+    const target = portraitMainArt || desktopArtVisible ? openArtRef.current : null;
+    sheet.registerOpenArt(target, fullBleedHero ? 0 : 12);
     return () => sheet.registerOpenArt(null, 12);
-  }, [sheet, portraitMainArt, desktopArtVisible, nowPlaying?.artworkUrl]);
+  }, [sheet, portraitMainArt, desktopArtVisible, fullBleedHero, nowPlaying?.artworkUrl]);
 
-  // Measure the portrait artwork's resting bottom edge for the 6×6 mesh seam anchor.
+  // Measure the portrait artwork / hero bottom edge for the 6×6 mesh seam anchor.
   useLayoutEffect(() => {
-    if (!portraitMainArt || !openArtRef.current) {
+    const el = fullBleedHero ? heroSlotRef.current : portraitMainArt ? openArtRef.current : null;
+    if (!el) {
       setSeamY(0);
+      setHeroBottomPx(0);
       return;
     }
     const updateSeam = () => {
-      const el = openArtRef.current;
-      if (!el) return;
+      const container = contentRef.current;
       const rect = el.getBoundingClientRect();
-      const offset = sheet?.getSnapshot().offset ?? 0;
-      const restingBottom = Math.max(0, Math.round(rect.bottom - offset));
-      setSeamY(restingBottom);
+      const topAnchor = container ? container.getBoundingClientRect().top : sheet?.getSnapshot().offset ?? 0;
+      const rawBottom = rect.bottom - topAnchor;
+      const bottom = fullBleedHero ? Math.max(0, Math.round(rawBottom + 10)) : Math.max(0, Math.round(rawBottom));
+      if (fullBleedHero) setHeroBottomPx(bottom);
+      setSeamY(bottom);
     };
     updateSeam();
     const ro = new ResizeObserver(updateSeam);
-    ro.observe(openArtRef.current);
+    ro.observe(el);
     window.addEventListener('resize', updateSeam);
     return () => {
       ro.disconnect();
       window.removeEventListener('resize', updateSeam);
     };
-  }, [portraitMainArt, sheet, viewport.w, viewport.h]);
+  }, [fullBleedHero, portraitMainArt, sheet, viewport.w, viewport.h]);
 
   const wake = useCallback(() => {
     setIdle(false);
@@ -427,10 +468,28 @@ export function FullScreenPlayer() {
   if (!nowPlaying) return null;
   const { videoId, title, artist } = nowPlaying;
   const album = track?.album ?? null;
+  const effectiveTrack: Track = track ?? {
+    videoId,
+    title,
+    artists: artist ? [{ name: artist, id: null }] : [],
+    album: null,
+    durationSec: nowPlaying.durationSec || null,
+    explicit: false,
+    thumbnail: nowPlaying.artworkUrl,
+    index: null,
+    plays: null,
+  };
 
   const hidden = theater && playing && idle ? ' pointer-events-none opacity-0' : '';
   const artworkPoseScale = !playing ? ARTWORK_PAUSE_SCALE : scrubbing ? ARTWORK_DRAG_SCALE : 1;
   const backdropMode = column || viewport.tablet || theater ? 'fullBlur' : 'mesh';
+
+  const baseTopAlpha = topBandScrimAlpha(topLuminance);
+  const topGradientAlpha = column ? Math.max(baseTopAlpha, SUBVIEW_STATUS_SCRIM_MIN_ALPHA) : baseTopAlpha;
+  const topScrimBg = topScrimGradient(topGradientAlpha);
+  const heroMask = heroDissolveMask(HERO_FADE_FRACTION, FADE_CURVE_STOPS);
+  const heroBlurMask = heroBlurDissolveMask(HERO_FADE_FRACTION, FADE_CURVE_STOPS);
+  const queueMask = verticalEdgeFadeMask('28px', '28px', 8);
 
   const initialOffset = sheet?.getSnapshot().offset ?? 0;
 
@@ -508,7 +567,7 @@ export function FullScreenPlayer() {
         {!compact && <NerdStats />}
       </div>
       <FavoriteButton videoId={nowPlaying.videoId} className={chromeDiscButton} size={18} />
-      {track && <TrackMenu track={track} className={chromeDiscButton} placement="above-end" />}
+      <TrackMenu track={effectiveTrack} inPlayer className={chromeDiscButton} placement="above-end" />
     </div>
   );
 
@@ -537,6 +596,25 @@ export function FullScreenPlayer() {
     </div>
   );
 
+  const renderQueueContainer = (wrapperClassName: string) => (
+    <div className={`relative ${wrapperClassName}`}>
+      <div
+        className="flex size-full min-h-0 flex-1 flex-col overflow-hidden"
+        style={{ maskImage: queueMask, WebkitMaskImage: queueMask }}
+      >
+        <UpNext />
+      </div>
+      <div
+        className="pointer-events-none absolute inset-x-0 top-0 h-7 backdrop-blur-[14px] [mask-image:linear-gradient(to_bottom,#000_0%,rgba(0,0,0,0.6)_45%,transparent_100%)]"
+        aria-hidden="true"
+      />
+      <div
+        className="pointer-events-none absolute inset-x-0 bottom-0 h-9 backdrop-blur-[14px] [mask-image:linear-gradient(to_top,#000_0%,rgba(0,0,0,0.6)_45%,transparent_100%)]"
+        aria-hidden="true"
+      />
+    </div>
+  );
+
   return (
     <div
       ref={sheetRef}
@@ -559,36 +637,104 @@ export function FullScreenPlayer() {
       <div ref={contentRef} className="relative flex size-full flex-col bg-[#121212]">
         <MeshBackdrop artworkUrl={nowPlaying.artworkUrl} seamY={seamY} mode={backdropMode} />
 
+        {/* Full-bleed phone hero artwork with 16-stop smootherstep dissolve + gradient blur into 6x6 mesh (NowPlayingScreen.kt:3006-3311). */}
+        {fullBleedHero && nowPlaying.artworkUrl && (
+          <div
+            ref={openArtRef}
+            className="pointer-events-none absolute inset-x-0 top-0 z-0 overflow-hidden"
+            style={{
+              height: heroBottomPx > 0 ? `${heroBottomPx}px` : '56dvh',
+              maskImage: heroMask,
+              WebkitMaskImage: heroMask,
+            }}
+            aria-hidden="true"
+          >
+            <img
+              key={nowPlaying.artworkUrl}
+              className="size-full object-cover"
+              src={sizedArtwork(nowPlaying.artworkUrl, 900)}
+              alt=""
+              referrerPolicy="no-referrer"
+              decoding="async"
+            />
+            {motion && (
+              <MotionArtwork
+                key={motion.url}
+                motion={motion}
+                className="absolute inset-0 size-full object-cover opacity-0 transition-opacity duration-600 ease-in data-ready:opacity-100"
+                playing={playing}
+              />
+            )}
+            {/* Gradient-blur dissolve over bottom 42% so the cover melts into the mesh with no seam. */}
+            <div
+              className="absolute inset-0 overflow-hidden"
+              style={{
+                maskImage: heroBlurMask,
+                WebkitMaskImage: heroBlurMask,
+              }}
+            >
+              <img
+                src={sizedArtwork(nowPlaying.artworkUrl, 240)}
+                alt=""
+                referrerPolicy="no-referrer"
+                decoding="async"
+                className="size-full scale-108 object-cover blur-[22px] saturate-115"
+              />
+              <div className="absolute inset-0 backdrop-blur-[18px]" />
+            </div>
+          </div>
+        )}
+
         {theater && (
           <div className="absolute inset-0 bg-black">
             <VideoSurface fit="contain" className="size-full" />
           </div>
         )}
 
+        {/* Top status/dismiss scrim + progressive blur for scrolled subviews (NowPlayingScreen.kt:2522-2547). */}
+        <div
+          className="pointer-events-none absolute inset-x-0 top-0 z-1"
+          style={{
+            height: 'calc(env(safe-area-inset-top, 0px) + 56px)',
+            background: topScrimBg,
+          }}
+          aria-hidden="true"
+        />
+        {column && (
+          <div
+            className="bc-top-fade pointer-events-none absolute inset-x-0 top-0 z-1"
+            style={{ height: 'calc(env(safe-area-inset-top, 0px) + 48px)' }}
+            aria-hidden="true"
+          />
+        )}
+
         {/* 32px top dismiss strip (`DISMISS_STRIP_HEIGHT`, NowPlayingScreen.kt:271). */}
         <div
-          className={`relative z-2 flex flex-none items-center justify-between px-4 pt-[env(safe-area-inset-top,0px)] transition-opacity duration-300${hidden}`}
+          className={`relative z-2 flex flex-none touch-none items-center justify-between px-4 pt-[env(safe-area-inset-top,0px)] transition-opacity duration-300${hidden}`}
           style={{ minHeight: `${DISMISS_STRIP_HEIGHT}px` }}
         >
           <button
             ref={closeRef}
             type="button"
-            className="grid size-9 place-items-center rounded-full text-white/75 transition-colors hover:bg-white/12 hover:text-white"
+            className="grid size-9 place-items-center rounded-full text-white/80 drop-shadow-[0_1px_4px_rgba(0,0,0,0.45)] transition-colors hover:bg-white/12 hover:text-white"
             aria-label="Close"
             onClick={handleClose}
           >
             <ChevronDown size={22} />
           </button>
 
-          {/* Grab pill indicator */}
-          <div className="pointer-events-none h-1 w-9 rounded-full bg-white/25" aria-hidden="true" />
+          {/* Grab pill indicator (NowPlayingScreen.kt:2715-2721): 38x5px white@70% with shadow. */}
+          <div
+            className="pointer-events-none h-[5px] w-[38px] rounded-[3px] bg-white/70 shadow-[0_1px_2px_rgba(0,0,0,0.3)]"
+            aria-hidden="true"
+          />
 
           <div className="flex items-center gap-2">
             {video && <VideoQuality />}
             {document.fullscreenEnabled && (
               <button
                 type="button"
-                className="grid size-9 place-items-center rounded-full text-white/75 transition-colors hover:bg-white/12 hover:text-white"
+                className="grid size-9 place-items-center rounded-full text-white/80 drop-shadow-[0_1px_4px_rgba(0,0,0,0.45)] transition-colors hover:bg-white/12 hover:text-white"
                 aria-label={browserFullScreen ? 'Exit full screen' : 'Enter full screen'}
                 onClick={toggleBrowserFullScreen}
               >
@@ -611,7 +757,7 @@ export function FullScreenPlayer() {
             </div>
           </div>
         ) : viewport.landscape ? (
-          <div className="mx-auto grid min-h-0 w-full max-w-[1120px] flex-1 grid-cols-[minmax(260px,420px)_minmax(300px,1fr)] items-center gap-x-[clamp(32px,6vw,96px)] px-(--bc-player-gutter) pb-6">
+          <div className="relative z-1 mx-auto grid min-h-0 w-full max-w-[1120px] flex-1 grid-cols-[minmax(260px,420px)_minmax(300px,1fr)] items-center gap-x-[clamp(32px,6vw,96px)] px-(--bc-player-gutter) pb-6">
             <section className="flex min-h-0 flex-col items-center justify-center gap-5" aria-label="Player">
               {renderArtworkBox(
                 `w-full ${video ? 'aspect-video bg-black' : 'aspect-square'} max-w-[min(38vw,calc(100dvh-220px),420px)]`,
@@ -621,7 +767,7 @@ export function FullScreenPlayer() {
 
             <section className="flex h-full min-h-0 flex-col justify-center" aria-label={showLyrics ? 'Lyrics' : showQueue ? 'Up Next' : 'Controls'}>
               {showLyrics ? (
-                <div className="flex h-[min(78dvh,640px)] min-h-0 flex-col" data-no-sheet-drag>
+                <div key="landscape-lyrics" className="flex h-[min(78dvh,640px)] min-h-0 animate-enter flex-col" data-no-sheet-drag>
                   <LyricsPanel variant="full" />
                   {!viewport.shortLandscape && (
                     <div className="mt-3 flex flex-col gap-1 border-t border-white/10 pt-3">
@@ -632,10 +778,8 @@ export function FullScreenPlayer() {
                   )}
                 </div>
               ) : showQueue ? (
-                <div className="flex h-[min(78dvh,640px)] min-h-0 flex-col" data-no-sheet-drag>
-                  <div className="min-h-0 flex-1 overflow-hidden [mask-image:linear-gradient(180deg,#000_calc(100%-64px),transparent)]">
-                    <UpNext />
-                  </div>
+                <div key="landscape-queue" className="flex h-[min(78dvh,640px)] min-h-0 animate-enter flex-col" data-no-sheet-drag>
+                  {renderQueueContainer('min-h-0 flex-1')}
                   {!viewport.shortLandscape && (
                     <div className="mt-3 flex flex-col gap-1 border-t border-white/10 pt-3">
                       <ThinSlider onScrubDragChange={setScrubbing} />
@@ -655,12 +799,17 @@ export function FullScreenPlayer() {
           </div>
         ) : (
           /* Portrait layout: 30px `--bc-player-gutter`, max 560px (`NowPlayingScreen.kt:402-409`). */
-          <div className="mx-auto flex min-h-0 w-full max-w-(--bc-player-max) flex-1 flex-col px-(--bc-player-gutter) pb-[max(env(safe-area-inset-bottom,0px),16px)]">
+          <div className="relative z-1 mx-auto flex min-h-0 w-full max-w-(--bc-player-max) flex-1 flex-col px-(--bc-player-gutter) pb-[max(env(safe-area-inset-bottom,0px),16px)]">
             {column ? (
               <>
                 {/* Collapsed 60px header with 54px thumbnail (`NowPlayingScreen.kt:235-236`). */}
-                <div className="flex h-(--bc-player-header) flex-none items-center gap-3">
-                  <div className="size-(--bc-player-thumb) flex-none overflow-hidden rounded-(--bc-radius-art) bg-[#1c1c1e] shadow-(--bc-shadow-sleeve)">
+                <div className="flex h-(--bc-player-header) flex-none touch-none items-center gap-3 animate-enter">
+                  <button
+                    type="button"
+                    aria-label="Return to cover"
+                    className="size-(--bc-player-thumb) flex-none overflow-hidden rounded-(--bc-radius-art) bg-[#1c1c1e] shadow-(--bc-shadow-sleeve) transition-transform active:scale-95"
+                    onClick={() => setPanel(null)}
+                  >
                     {nowPlaying.artworkUrl && (
                       <img
                         className="size-full object-cover"
@@ -670,17 +819,15 @@ export function FullScreenPlayer() {
                         decoding="async"
                       />
                     )}
-                  </div>
+                  </button>
                   <div className="min-w-0 flex-1">{renderMetadata(true)}</div>
                 </div>
 
-                <div className="mt-2 flex min-h-0 flex-1 flex-col" data-no-sheet-drag>
+                <div key={`portrait-${panel}`} className="mt-2 flex min-h-0 flex-1 animate-enter flex-col" data-no-sheet-drag>
                   {showLyrics ? (
                     <LyricsPanel variant="full" />
                   ) : (
-                    <div className="flex min-h-0 flex-1 flex-col overflow-hidden [mask-image:linear-gradient(180deg,#000_calc(100%-56px),transparent)]">
-                      <UpNext />
-                    </div>
+                    renderQueueContainer('flex min-h-0 flex-1 flex-col')
                   )}
                 </div>
 
@@ -692,10 +839,11 @@ export function FullScreenPlayer() {
               </>
             ) : (
               <>
-                <div className="flex min-h-0 flex-1 items-center justify-center py-2">
-                  {renderArtworkBox(
-                    `w-full ${video ? 'aspect-video bg-black' : 'aspect-square'} max-w-[min(calc(100vw-2*var(--bc-player-gutter)),calc(100dvh-390px),500px)]`,
-                  )}
+                <div ref={heroSlotRef} className="flex min-h-0 flex-1 touch-none items-center justify-center py-2">
+                  {!fullBleedHero &&
+                    renderArtworkBox(
+                      `w-full ${video ? 'aspect-video bg-black' : 'aspect-square'} max-w-[min(calc(100vw-2*var(--bc-player-gutter)),calc(100dvh-390px),500px)]`,
+                    )}
                 </div>
 
                 <div className="mt-(--bc-player-art-title-gap) flex flex-none flex-col">

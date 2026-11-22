@@ -227,7 +227,7 @@ export function FloatingTabBar() {
   return (
     <nav
       aria-label="Primary"
-      className="bc-frost bc-pill-squircle fixed left-1/2 z-(--z-web-chrome) h-(--bc-tabbar-h) w-[min(calc(100vw-2*var(--bc-tabbar-gutter)),var(--bc-floating-bar-max))] -translate-x-1/2 p-(--bc-pill-inset) text-(--bc-glass-content) shadow-(--bc-shadow-glass) select-none lg:hidden"
+      className="bc-frost fixed left-1/2 z-(--z-web-chrome) h-(--bc-tabbar-h) w-[min(calc(100vw-2*var(--bc-tabbar-gutter)),var(--bc-floating-bar-max))] -translate-x-1/2 rounded-full p-(--bc-pill-inset) text-(--bc-glass-content) shadow-(--bc-shadow-glass) select-none lg:hidden"
       style={{
         bottom: 'calc(var(--bc-bottom-inset) + var(--bc-tabbar-lift))',
       }}

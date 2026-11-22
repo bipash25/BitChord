@@ -119,4 +119,26 @@ describe('PlayerSheetController', () => {
     expect(ctrl.getSnapshot().phase).toBe('opening');
     ctrl.dispose();
   });
+
+  it('waits for sheet layout registration before stepping the open spring', async () => {
+    const rafCalls: number[] = [];
+    vi.stubGlobal('requestAnimationFrame', () => {
+      rafCalls.push(1);
+      return rafCalls.length;
+    });
+    vi.stubGlobal('cancelAnimationFrame', () => {});
+
+    const ctrl = new PlayerSheetController();
+    ctrl.open();
+    // Before FullScreenPlayer mounts and registers sheetEl, spring rAF is held back.
+    expect(ctrl.getSnapshot().phase).toBe('opening');
+    expect(rafCalls.length).toBe(0);
+
+    const sheetEl = { style: {} } as unknown as HTMLElement;
+    const contentEl = { style: {} } as unknown as HTMLElement;
+    ctrl.registerSheet(sheetEl, contentEl);
+    await Promise.resolve();
+    expect(rafCalls.length).toBe(1);
+    ctrl.dispose();
+  });
 });

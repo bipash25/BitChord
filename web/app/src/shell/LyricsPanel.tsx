@@ -4,6 +4,7 @@ import { Check, ChevronDown, Loader2, Minus, Settings2 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Menu, MenuHeader, MenuItem, MenuSeparator } from '@/components/Menu';
 import { getBridge } from '@/extension/bridge';
+import { verticalEdgeFadeMask } from '@/lib/fadeCurve';
 import { LyricClock } from '@/lyrics/clock';
 import { onUngrantedChange, ungrantedOrigins } from '@/lyrics/http';
 import type { SourceState } from '@/lyrics/repository';
@@ -285,7 +286,7 @@ function LyricsView({ ttml, full }: { ttml: string; full: boolean }) {
       const scroller = root.querySelector('.lyrics-container');
       const target = host.current;
       if (!full || !scroller || !target) return;
-      const fade = () => target.style.setProperty('--lyrics-top-fade', `${Math.min(scroller.scrollTop, 80)}px`);
+      const fade = () => target.style.setProperty('--lyrics-top-fade', `${Math.max(28, Math.min(scroller.scrollTop + 28, 84))}px`);
       fade();
       scroller.addEventListener('scroll', fade, { passive: true, signal: unmounted.signal });
     });
@@ -365,15 +366,35 @@ function LyricsView({ ttml, full }: { ttml: string; full: boolean }) {
     };
   }, [deck, videoId, ttml, mixing]);
 
+  const fullMask = full ? verticalEdgeFadeMask('var(--lyrics-top-fade, 28px)', '24%', 8) : undefined;
+
   return (
-    <div
-      ref={host}
-      className={
-        full
-          ? 'flex min-h-0 flex-1 [mask-image:linear-gradient(180deg,transparent,#000_var(--lyrics-top-fade,0px),#000_62%,transparent)]'
-          : 'flex min-h-0 flex-1'
-      }
-    />
+    <div className="relative flex min-h-0 flex-1">
+      <div
+        ref={host}
+        className="flex min-h-0 flex-1"
+        style={
+          fullMask
+            ? {
+                maskImage: fullMask,
+                WebkitMaskImage: fullMask,
+              }
+            : undefined
+        }
+      />
+      {full && (
+        <>
+          <div
+            className="pointer-events-none absolute inset-x-0 top-0 h-10 backdrop-blur-[18px] [mask-image:linear-gradient(to_bottom,#000_0%,rgba(0,0,0,0.65)_45%,transparent_100%)]"
+            aria-hidden="true"
+          />
+          <div
+            className="pointer-events-none absolute inset-x-0 bottom-0 h-16 backdrop-blur-[20px] [mask-image:linear-gradient(to_top,#000_0%,rgba(0,0,0,0.72)_45%,transparent_100%)]"
+            aria-hidden="true"
+          />
+        </>
+      )}
+    </div>
   );
 }
 
@@ -399,7 +420,7 @@ function ProviderPicker({ current, full }: { current: LyricsSourceId | null; ful
     <div
       className={
         full
-          ? 'flex items-center justify-between pb-1 opacity-0 transition-opacity duration-200 group-hover/panel:opacity-100 focus-within:opacity-100'
+          ? 'flex items-center justify-between pb-1 opacity-75 transition-opacity duration-200 group-hover/panel:opacity-100 focus-within:opacity-100'
           : 'flex items-center justify-between px-4 pt-4 pb-1'
       }
     >

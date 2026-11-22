@@ -270,7 +270,6 @@ export function MeshBackdrop({ artworkUrl, seamY = 0, mode = 'mesh' }: MeshBackd
   }, [seamY, reducedMotion]);
 
   useEffect(() => {
-    if (mode !== 'mesh') return;
     const el = canvas.current;
     if (!el) return;
     const renderer = fallback ? canvasRenderer(el) : webglRenderer(el);
@@ -319,9 +318,10 @@ export function MeshBackdrop({ artworkUrl, seamY = 0, mode = 'mesh' }: MeshBackd
       renderer.dispose();
       s.wake = () => {};
     };
-  }, [mode, generation, fallback, reducedMotion]);
+  }, [generation, fallback, reducedMotion]);
 
   const blurSrc = artworkUrl ? artworkAtPixels(artworkUrl, 120) : null;
+  const showFullBlur = mode === 'fullBlur';
 
   return (
     <div
@@ -331,37 +331,40 @@ export function MeshBackdrop({ artworkUrl, seamY = 0, mode = 'mesh' }: MeshBackd
       data-fallback={fallback || undefined}
       data-mode={mode}
     >
-      {mode === 'mesh' ? (
-        <>
-          <canvas key={`${generation}-${fallback}`} ref={canvas} className="absolute inset-0 size-full" />
-          {/* ArtworkMeshBackdrop.kt:358-365: subtle black 6%→30% scrim for white text legibility. */}
-          <div
-            className="pointer-events-none absolute inset-0"
-            style={{ background: 'linear-gradient(to bottom, rgba(0, 0, 0, 0.06), rgba(0, 0, 0, 0.3))' }}
+      <canvas key={`${generation}-${fallback}`} ref={canvas} className="absolute inset-0 size-full" />
+      {/* ArtworkMeshBackdrop.kt:358-365: subtle black 6%→30% scrim for white text legibility. */}
+      <div
+        className="pointer-events-none absolute inset-0"
+        style={{ background: 'linear-gradient(to bottom, rgba(0, 0, 0, 0.06), rgba(0, 0, 0, 0.3))' }}
+      />
+
+      {/* Full-cover blur crossfade (NowPlayingScreen.kt:2368-2377): 360ms FastOutSlowIn over the mesh. */}
+      <div
+        className="pointer-events-none absolute inset-0"
+        style={{
+          opacity: showFullBlur ? 1 : 0,
+          transition: reducedMotion ? 'none' : 'opacity 360ms cubic-bezier(0.4, 0, 0.2, 1)',
+        }}
+      >
+        {blurSrc && (
+          <img
+            key={blurSrc}
+            src={blurSrc}
+            alt=""
+            referrerPolicy="no-referrer"
+            decoding="async"
+            className="absolute inset-0 size-full scale-115 object-cover blur-[42px] saturate-125"
           />
-        </>
-      ) : (
-        <>
-          {blurSrc && (
-            <img
-              key={blurSrc}
-              src={blurSrc}
-              alt=""
-              referrerPolicy="no-referrer"
-              decoding="async"
-              className="absolute inset-0 size-full scale-115 object-cover blur-[42px] saturate-125"
-            />
-          )}
-          {/* FullArtworkScrim (ArtworkMeshBackdrop.kt:406-410): 34% → 48% → 64%. */}
-          <div
-            className="pointer-events-none absolute inset-0"
-            style={{
-              background:
-                'linear-gradient(to bottom, rgba(0, 0, 0, 0.34) 0%, rgba(0, 0, 0, 0.48) 55%, rgba(0, 0, 0, 0.64) 100%)',
-            }}
-          />
-        </>
-      )}
+        )}
+        {/* FullArtworkScrim (ArtworkMeshBackdrop.kt:406-410): 34% → 48% → 64%. */}
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background:
+              'linear-gradient(to bottom, rgba(0, 0, 0, 0.34) 0%, rgba(0, 0, 0, 0.48) 55%, rgba(0, 0, 0, 0.64) 100%)',
+          }}
+        />
+      </div>
     </div>
   );
 }

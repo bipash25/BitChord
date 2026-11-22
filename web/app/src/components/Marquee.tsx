@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { horizontalEdgeFadeMask } from '@/lib/fadeCurve';
 import { useReducedMotion } from '@/lib/motionPrefs';
 
 export const MARQUEE_SPEED_PX_PER_SEC = 26;
@@ -100,7 +101,7 @@ export function Marquee({
 
     const applyEndOnlyMask = () => {
       if (metrics.overflowing) {
-        const mask = `linear-gradient(to right, #000 0%, #000 calc(100% - ${MARQUEE_FADE_PX}px), transparent 100%)`;
+        const mask = horizontalEdgeFadeMask(MARQUEE_FADE_PX, 0, 1);
         box.style.maskImage = mask;
         box.style.webkitMaskImage = mask;
       } else {
@@ -124,8 +125,7 @@ export function Marquee({
         applyEndOnlyMask();
         return;
       }
-      const leftStop = Math.round(MARQUEE_FADE_PX * startAlpha);
-      const mask = `linear-gradient(to right, transparent 0%, #000 ${leftStop}px, #000 calc(100% - ${MARQUEE_FADE_PX}px), transparent 100%)`;
+      const mask = horizontalEdgeFadeMask(MARQUEE_FADE_PX, startAlpha, 1);
       box.style.maskImage = mask;
       box.style.webkitMaskImage = mask;
     };
