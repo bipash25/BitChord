@@ -17,8 +17,8 @@ export function NerdStats() {
   if (!show || !nowPlaying) return null;
   return (
     // The phone's shadow: free on the dark mesh, and what keeps it legible over a bright music video.
-    <div className="mt-1 flex min-w-0 flex-col gap-px type-[500_11px/14px] tabular-nums [text-shadow:0_1px_4px_rgb(0_0_0/0.55)]">
-      <span className="truncate text-secondary">{describeStream(nowPlaying) ?? 'Measuring the stream…'}</span>
+    <div className="mt-1 flex min-w-0 flex-col gap-px font-(family-name:--bc-font-family) text-[11px] leading-[14px] font-medium tabular-nums [text-shadow:0_1px_4px_rgb(0_0_0/0.55)]">
+      <span className="truncate text-white/70">{describeStream(nowPlaying) ?? 'Measuring the stream…'}</span>
       {automix && <AutomixLine videoId={nowPlaying.videoId} />}
     </div>
   );
@@ -70,7 +70,7 @@ function AutomixLine({ videoId }: { videoId: string }) {
     text = `Automix · this song: ${label(videoId, true)} · next: ${next ? label(next, false) : 'none'}`;
   }
   // Dimmer than the stream line: that one describes the audio, this one the app.
-  return <span className="truncate text-tertiary">{text}</span>;
+  return <span className="truncate text-white/50">{text}</span>;
 }
 
 /** "out 4-bar loop, clear by lyrics · in 2-bar, clear by mask · 111 → 85 BPM over 11 bars". */

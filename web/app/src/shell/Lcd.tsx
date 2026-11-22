@@ -14,6 +14,7 @@ import { useUi } from '@/state/ui';
 import { useHasVideo } from '@/state/video';
 import { albumPageFor, artistPageFor } from './nowPlayingLinks';
 import { MixWindowHighlight } from './NerdStats';
+import { usePlayerSheet } from './PlayerSheetMotion';
 import { useScrubber } from './useScrubber';
 
 // The title and each artist: plain until hovered, then underlined on their own.
@@ -98,6 +99,7 @@ export function Lcd() {
   const status = usePlayer((s) => s.status);
   const error = usePlayer((s) => s.error);
   const openFullScreen = useUi((s) => s.setFullScreen);
+  const sheet = usePlayerSheet();
   // The queue's row for what's playing: it carries the album and each artist's channel.
   const track = usePlayer((s) => {
     const entry = s.queue[s.index]?.track;
@@ -124,7 +126,7 @@ export function Lcd() {
         // A music video plays here in small, at 16:9.
         className={`group/art relative block h-[34px] overflow-hidden rounded-[6px] bg-joe p-0 transition-[filter,opacity] ${video ? 'w-[60px] bg-black' : 'w-[34px]'}`}
         aria-label="Open full screen player"
-        onClick={() => openFullScreen(true)}
+        onClick={() => (sheet ? sheet.open() : openFullScreen(true))}
       >
         {nowPlaying.artworkUrl && (
           <img

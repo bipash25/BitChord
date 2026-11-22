@@ -1,10 +1,10 @@
-import { Maximize, Minimize, X } from 'lucide-react';
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { ChevronDown, Maximize, Minimize } from 'lucide-react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
+import type React from 'react';
 import { useLocation } from 'react-router';
 import {
   BackwardIcon,
   ForwardIcon,
-  LyricsActiveIcon,
   LyricsIcon,
   PauseIcon,
   PlayIcon,
@@ -15,24 +15,37 @@ import {
 } from '@/components/icons/Transport';
 import { ExplicitBadge } from '@/components/music/ExplicitBadge';
 import { FavoriteButton } from '@/components/music/FavoriteButton';
-import { TrackMenu } from '@/components/music/TrackMenu';
-import { albumHref } from '@/components/music/links';
 import { MotionArtwork } from '@/components/music/MotionArtwork';
+import { TrackMenu } from '@/components/music/TrackMenu';
 import { VideoSurface } from '@/components/music/VideoSurface';
+import { albumHref } from '@/components/music/links';
 import { useTrackMotion } from '@/data/apple/motionArt';
 import { sizedArtwork } from '@/lib/artwork';
+import { useReducedMotion } from '@/lib/motionPrefs';
 import { usePlayer } from '@/state/player';
 import { useUi } from '@/state/ui';
 import { useHasVideo, useVideo } from '@/state/video';
-import { Credits, PageLink, pageLink } from './Lcd';
+import { Credits, PageLink } from './Lcd';
 import { LyricsPanel } from './LyricsPanel';
 import { MeshBackdrop } from './MeshBackdrop';
-import { albumPageFor } from './nowPlayingLinks';
+import { TOUCH_SLOP, computeVelocityY, type PointerSample } from './MiniPlayerGestures';
+import { NerdStats } from './NerdStats';
+import { DISMISS_STRIP_HEIGHT, usePlayerSheet } from './PlayerSheetMotion';
+import { ThinSlider } from './ThinSlider';
 import { UpNext } from './UpNext';
-import { MixWindowHighlight, NerdStats } from './NerdStats';
-import { useScrubber } from './useScrubber';
 import { VideoQuality } from './VideoQuality';
-import { fadeForVolume, VolumeControl } from './VolumeControl';
+import { VolumeControl, fadeForVolume } from './VolumeControl';
+import { albumPageFor } from './nowPlayingLinks';
+
+const LANDSCAPE_PLAYER_MIN_WIDTH = 560;
+const TABLET_PLAYER_MIN_WIDTH = 700;
+const IDLE_MS = 3000;
+
+const ARTWORK_POSE_EASING = 'cubic-bezier(0.215, 0.61, 0.355, 1)';
+const ARTWORK_PAUSE_SCALE = 0.88;
+const ARTWORK_DRAG_SCALE = 0.94;
+
+const linkClass = 'cursor-pointer text-start hover:underline focus-visible:underline aria-busy:cursor-progress';
 
 function useBrowserFullScreen(): boolean {
   return useSyncExternalStore(
@@ -44,43 +57,33 @@ function useBrowserFullScreen(): boolean {
   );
 }
 
-/** The seek line under the track's names: thicker on hover, with the times beneath its ends. */
-function Scrubber() {
-  const { bar, elapsed, remaining, mixLabel, dragging, handlers } = useScrubber();
-  return (
-    <div className="group/scrub mt-3.5" data-dragging={dragging || undefined}>
-      {/* A taller hit area than the line it carries. */}
-      <div className="group/hit flex h-4 cursor-pointer touch-none items-center" {...handlers}>
-        <div
-          className="relative h-1 flex-1 overflow-hidden rounded-[999px] bg-quaternary transition-[height] duration-120 ease-in group-hover/hit:h-2 group-data-dragging/scrub:h-2"
-          aria-hidden="true"
-        >
-          <MixWindowHighlight />
-          <div
-            ref={bar}
-            className="relative size-full origin-left scale-x-(--progress) bg-secondary transition-[background-color] duration-120 ease-in [--progress:0] group-hover/hit:bg-primary group-data-dragging/scrub:bg-primary"
-          />
-        </div>
-      </div>
-      <div className="relative mt-0.5 flex justify-between type-[500_11px/14px] tabular-nums text-tertiary">
-        <span ref={elapsed} />
-        <span ref={mixLabel} className="pointer-events-none absolute inset-x-0 text-center text-secondary opacity-0" aria-hidden="true">
-          Mixing
-        </span>
-        <span ref={remaining} />
-      </div>
-    </div>
-  );
+function readViewport() {
+  if (typeof window === 'undefined') return { w: 390, h: 844 };
+  return { w: window.innerWidth, h: window.innerHeight };
+}
+
+function usePlayerViewport() {
+  const [size, setSize] = useState(readViewport);
+  useEffect(() => {
+    const onResize = () => setSize(readViewport());
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  const landscape = size.w > size.h && size.w >= LANDSCAPE_PLAYER_MIN_WIDTH;
+  const tablet = size.w >= TABLET_PLAYER_MIN_WIDTH;
+  const shortLandscape = landscape && size.h < 540;
+  return { ...size, landscape, tablet, shortLandscape };
 }
 
 const transportButton =
-  'grid place-items-center rounded-full transition-[background-color,scale] duration-100 ease-in enabled:hover:bg-quinary enabled:active:scale-90 disabled:opacity-40';
-// Shuffle and repeat, when on: full white on the mesh, where red would clash.
-const toggle = `${transportButton} size-9 text-tertiary aria-pressed:text-primary`;
-const skip = `${transportButton} size-12 text-primary`;
+  'grid place-items-center rounded-full text-white transition-[opacity,scale,background-color] duration-150 enabled:hover:bg-white/10 enabled:active:scale-90 disabled:opacity-30';
 
-/** Shuffle, previous, play/pause, next, repeat. No volume: the pill keeps that. */
-function Transport() {
+/**
+ * Android-ported transport (`PlayerControls.kt:839-846`):
+ * 53px skip buttons squashed vertically (`scaleY(0.85)`), large central play/pause,
+ * and flanking shuffle / repeat toggles.
+ */
+function Transport({ compact = false }: { compact?: boolean }) {
   const hasTrack = usePlayer((s) => s.nowPlaying !== null);
   const playing = usePlayer((s) => s.status === 'playing' || s.status === 'buffering');
   const hasNext = usePlayer((s) => s.index + 1 < s.queue.length || s.repeat !== 'off' || (s.autoplay && s.index >= 0));
@@ -89,84 +92,160 @@ function Transport() {
   const { togglePlay, next, previous, toggleShuffle, cycleRepeat } = usePlayer.getState();
 
   return (
-    <div className="mx-auto mt-[clamp(8px,1.6vh,16px)] mb-0 flex h-13 w-[min(100%,315px)] items-center justify-between">
-      <button className={toggle} aria-label="Shuffle" aria-pressed={shuffle} onClick={toggleShuffle}>
-        <ShuffleIcon size={30} />
-      </button>
-      <button className={skip} disabled={!hasTrack} aria-label="Previous" onClick={previous}>
-        <BackwardIcon size={40} />
-      </button>
-      <button className={`${transportButton} size-14 text-primary`} disabled={!hasTrack} aria-label={playing ? 'Pause' : 'Play'} onClick={togglePlay}>
-        {playing ? <PauseIcon size={48} /> : <PlayIcon size={48} />}
-      </button>
-      <button className={skip} disabled={!hasTrack || !hasNext} aria-label="Next" onClick={next}>
-        <ForwardIcon size={40} />
-      </button>
+    <div
+      className={`mx-auto flex w-full max-w-[340px] items-center justify-between ${
+        compact ? 'mt-1 h-[54px]' : 'mt-[clamp(6px,1.4vh,14px)] h-[64px]'
+      }`}
+    >
       <button
-        className={toggle}
+        type="button"
+        className={`${transportButton} size-9 ${shuffle ? 'text-white' : 'text-white/45'}`}
+        aria-label="Shuffle"
+        aria-pressed={shuffle}
+        onClick={toggleShuffle}
+      >
+        <ShuffleIcon size={24} />
+      </button>
+
+      <button
+        type="button"
+        className={`${transportButton} size-(--bc-skip-icon)`}
+        disabled={!hasTrack}
+        aria-label="Previous"
+        onClick={previous}
+      >
+        <BackwardIcon size={53} style={{ transform: 'scaleX(-1) scaleY(0.85)' }} />
+      </button>
+
+      <button
+        type="button"
+        className={`${transportButton} ${compact ? 'size-14' : 'size-16'}`}
+        disabled={!hasTrack}
+        aria-label={playing ? 'Pause' : 'Play'}
+        onClick={togglePlay}
+      >
+        {playing ? <PauseIcon size={compact ? 46 : 54} /> : <PlayIcon size={compact ? 46 : 54} />}
+      </button>
+
+      <button
+        type="button"
+        className={`${transportButton} size-(--bc-skip-icon)`}
+        disabled={!hasTrack || !hasNext}
+        aria-label="Next"
+        onClick={next}
+      >
+        <ForwardIcon size={53} style={{ transform: 'scaleY(0.85)' }} />
+      </button>
+
+      <button
+        type="button"
+        className={`${transportButton} size-9 ${repeat !== 'off' ? 'text-white' : 'text-white/45'}`}
         aria-label={repeat === 'one' ? 'Repeat one' : repeat === 'all' ? 'Repeat all' : 'Repeat'}
         aria-pressed={repeat !== 'off'}
         onClick={cycleRepeat}
       >
-        {repeat === 'one' ? <RepeatOneIcon size={30} /> : <RepeatIcon size={30} />}
+        {repeat === 'one' ? <RepeatOneIcon size={24} /> : <RepeatIcon size={24} />}
       </button>
     </div>
   );
 }
 
-// Close, browser full screen, the column toggles and the speaker, in the corners.
-const chromeButton =
-  'grid size-8 place-items-center rounded-full text-secondary transition-[background-color,color] duration-100 ease-in hover:bg-quinary hover:text-primary';
-const chrome = `absolute z-1 ${chromeButton}`;
-const artworkLayer = 'absolute inset-0 size-full rounded-[inherit] object-cover opacity-0 transition-opacity duration-300 ease-in';
+/**
+ * Bottom action button (`PlayerControls.kt:848-860, :1271-1329`):
+ * 44px touch slot, 26px glyph, and when active a 35px rounded-[7px] white@62%
+ * tile with the glyph punched out via SVG mask (`SrcOut`) so the backdrop shines through.
+ */
+function BottomActionTile({
+  label,
+  active,
+  onClick,
+  kind,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+  kind: 'lyrics' | 'queue';
+}) {
+  const maskId = useId();
+  const Icon = kind === 'lyrics' ? LyricsIcon : UpNextIcon;
 
-/** How long the pointer can rest before a playing music video hides its controls. */
-const IDLE_MS = 3000;
+  return (
+    <button
+      type="button"
+      className="grid size-(--bc-bottom-action) place-items-center rounded-[10px] text-white/75 transition-[transform,color] duration-150 hover:text-white active:scale-92"
+      aria-label={label}
+      aria-pressed={active}
+      onClick={onClick}
+    >
+      {active ? (
+        <svg width={35} height={35} viewBox="0 0 35 35" aria-hidden="true">
+          <defs>
+            <mask id={maskId}>
+              <rect width={35} height={35} rx={7} fill="#ffffff" />
+              <Icon x={4.5} y={4.5} size={26} color="#000000" />
+            </mask>
+          </defs>
+          <rect width={35} height={35} rx={7} fill="rgba(255, 255, 255, 0.62)" mask={`url(#${maskId})`} />
+        </svg>
+      ) : (
+        <Icon size={26} />
+      )}
+    </button>
+  );
+}
+
+const chromeDiscButton =
+  'grid size-[34px] flex-none place-items-center rounded-full bg-white/18 text-white transition-[background-color,transform] duration-150 hover:bg-white/28 active:scale-92';
 
 /**
- * The full-screen player (report §7): the artwork on the left with the
- * track's names, the seek line and the transport under it; the lyrics, the
- * same am-lyrics panel as the side panel's, on the right; all over a mesh
- * gradient of the artwork's colours. With the lyrics closed, the artwork
- * column sits in the middle on its own, as Apple's does.
- *
- * A music video plays as Apple's do: on its own, it fills the window with
- * the names and transport over its foot, fading out while the pointer rests;
- * beside the lyrics or Up Next, it takes the artwork's place at 16:9.
+ * Android-ported Now Playing sheet (`NowPlayingScreen.kt`, spec §2.5, §4.1, §4.2):
+ * - Fixed sheet driven by `PlayerSheetMotion` (`PLAYER_SHEET_SPRING` 195/ζ1) + FLIP artwork flight.
+ * - Portrait layout with 30px `--bc-player-gutter`, max-width 560px, bottom-seam-anchored 6×6 mesh,
+ *   54px collapsed header for Lyrics/Queue, `ThinSlider`, 53px `scaleY(0.85)` skips, and 44px/35px bottom tiles.
+ * - Landscape / desktop layout with two columns and 500ms ease-out artwork poses (1 / .88 / .94).
  */
 export function FullScreenPlayer() {
   const nowPlaying = usePlayer((s) => s.nowPlaying);
-  // The queue's row for what's playing: it carries the album and each artist's channel.
   const track = usePlayer((s) => {
     const entry = s.queue[s.index]?.track;
     return entry && entry.videoId === s.nowPlaying?.videoId ? entry : null;
   });
-  // Apple's animated sleeve over the cover, as the phone's now-playing shows it.
   const motion = useTrackMotion(nowPlaying?.title, nowPlaying?.artist, track?.album?.name);
   const { pathname } = useLocation();
   const openedAt = useRef(pathname);
   const playing = usePlayer((s) => s.status === 'playing' || s.status === 'buffering');
   const setFullScreen = useUi((s) => s.setFullScreen);
+  const sheet = usePlayerSheet();
+  const reducedMotion = useReducedMotion();
   const video = useHasVideo(nowPlaying?.videoId);
-  // The right-hand column: the lyrics, Up Next, or nothing. Lyrics toggle bottom left, Up Next bottom right.
-  // A music video opens on its own, without the lyrics.
+  const viewport = usePlayerViewport();
+
   const [panel, setPanel] = useState<'lyrics' | 'queue' | null>(() =>
-    nowPlaying && useVideo.getState().videoId === nowPlaying.videoId ? null : 'lyrics',
+    nowPlaying && useVideo.getState().videoId === nowPlaying.videoId
+      ? null
+      : viewport.landscape && !viewport.shortLandscape
+        ? 'lyrics'
+        : null,
   );
-  // Once the listener picks a column, a video arriving late doesn't take it away.
   const picked = useRef(false);
   const [idle, setIdle] = useState(false);
   const [volumeOpen, setVolumeOpen] = useState(false);
-  const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const browserFullScreen = useBrowserFullScreen();
-  const close = useRef<HTMLButtonElement>(null);
-  // Whether this player put the page in the browser's full screen, so closing it leaves it again.
-  const enteredBrowserFullScreen = useRef(false);
+  const [scrubbing, setScrubbing] = useState(false);
+  const [seamY, setSeamY] = useState(0);
 
-  // The column follows the toggle alone: whether this track has lyrics, and
-  // from which provider, is the panel's own business to say.
+  const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const sheetRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const openArtRef = useRef<HTMLDivElement>(null);
+  const enteredBrowserFullScreen = useRef(false);
+  const browserFullScreen = useBrowserFullScreen();
+
   const showLyrics = panel === 'lyrics';
   const showQueue = panel === 'queue';
+  const column = showLyrics || showQueue;
+  const theater = video && !column;
+
   const togglePanel = (p: 'lyrics' | 'queue') => {
     picked.current = true;
     setPanel((on) => (on === p ? null : p));
@@ -176,42 +255,166 @@ export function FullScreenPlayer() {
     if (video && !picked.current) setPanel(null);
   }, [video]);
 
-  const wake = () => {
+  const handleClose = useCallback(() => {
+    if (sheet) sheet.close();
+    else setFullScreen(false);
+  }, [sheet, setFullScreen]);
+
+  // Register sheet & open-artwork container with PlayerSheetController.
+  useLayoutEffect(() => {
+    if (!sheet) return;
+    sheet.registerSheet(sheetRef.current, contentRef.current);
+    return () => sheet.registerSheet(null, null);
+  }, [sheet]);
+
+  const portraitMainArt = !viewport.landscape && !column && !theater;
+  const desktopArtVisible = viewport.landscape && !theater;
+
+  useLayoutEffect(() => {
+    if (!sheet) return;
+    const target = (portraitMainArt || desktopArtVisible) ? openArtRef.current : null;
+    sheet.registerOpenArt(target, 12);
+    return () => sheet.registerOpenArt(null, 12);
+  }, [sheet, portraitMainArt, desktopArtVisible, nowPlaying?.artworkUrl]);
+
+  // Measure the portrait artwork's resting bottom edge for the 6×6 mesh seam anchor.
+  useLayoutEffect(() => {
+    if (!portraitMainArt || !openArtRef.current) {
+      setSeamY(0);
+      return;
+    }
+    const updateSeam = () => {
+      const el = openArtRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const offset = sheet?.getSnapshot().offset ?? 0;
+      const restingBottom = Math.max(0, Math.round(rect.bottom - offset));
+      setSeamY(restingBottom);
+    };
+    updateSeam();
+    const ro = new ResizeObserver(updateSeam);
+    ro.observe(openArtRef.current);
+    window.addEventListener('resize', updateSeam);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', updateSeam);
+    };
+  }, [portraitMainArt, sheet, viewport.w, viewport.h]);
+
+  const wake = useCallback(() => {
     setIdle(false);
     if (idleTimer.current) clearTimeout(idleTimer.current);
     idleTimer.current = setTimeout(() => setIdle(true), IDLE_MS);
-  };
+  }, []);
+
   useEffect(() => {
     wake();
     return () => {
       if (idleTimer.current) clearTimeout(idleTimer.current);
     };
-  }, []);
+  }, [wake]);
 
   useEffect(() => {
     const opener = document.activeElement as HTMLElement | null;
-    close.current?.focus({ preventScroll: true });
+    closeRef.current?.focus({ preventScroll: true });
     return () => {
       if (enteredBrowserFullScreen.current && document.fullscreenElement) void document.exitFullscreen();
       opener?.focus({ preventScroll: true });
     };
   }, []);
 
-  // A title, artist or album link went somewhere: get out of the way so the page shows.
   useEffect(() => {
-    if (pathname !== openedAt.current) setFullScreen(false);
-  }, [pathname, setFullScreen]);
+    if (pathname !== openedAt.current) {
+      if (sheet) sheet.dismissImmediately();
+      else setFullScreen(false);
+    }
+  }, [pathname, setFullScreen, sheet]);
 
-  // Nothing left to show once the queue ends.
   useEffect(() => {
-    if (!nowPlaying) setFullScreen(false);
-  }, [nowPlaying, setFullScreen]);
+    if (!nowPlaying) {
+      if (sheet) sheet.dismissImmediately();
+      else setFullScreen(false);
+    }
+  }, [nowPlaying, setFullScreen, sheet]);
+
+  // Drag-down-to-dismiss on the 32px top strip and non-interactive upper player region.
+  const dismissDrag = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    lastY: number;
+    locked: boolean;
+    samples: PointerSample[];
+  } | null>(null);
+
+  const onSheetPointerDown = (e: React.PointerEvent<HTMLElement>) => {
+    wake();
+    if (!sheet || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.closest('button, a, input, [role="slider"], [data-no-sheet-drag]')) return;
+    dismissDrag.current = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      lastY: e.clientY,
+      locked: false,
+      samples: [{ y: e.clientY, t: e.timeStamp || performance.now() }],
+    };
+  };
+
+  const onSheetPointerMove = (e: React.PointerEvent<HTMLElement>) => {
+    wake();
+    const d = dismissDrag.current;
+    if (!d || d.pointerId !== e.pointerId || !sheet) return;
+    const dx = e.clientX - d.startX;
+    const dy = e.clientY - d.startY;
+    const t = e.timeStamp || performance.now();
+
+    if (!d.locked) {
+      if (Math.hypot(dx, dy) < TOUCH_SLOP) return;
+      if (dy > 0 && dy > Math.abs(dx)) {
+        d.locked = true;
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {
+          // Ignore synthetic events.
+        }
+        sheet.drag(dy);
+        d.lastY = e.clientY;
+        d.samples.push({ y: e.clientY, t });
+      } else {
+        dismissDrag.current = null;
+      }
+      return;
+    }
+
+    const deltaY = e.clientY - d.lastY;
+    d.lastY = e.clientY;
+    d.samples.push({ y: e.clientY, t });
+    if (d.samples.length > 12) d.samples.shift();
+    sheet.drag(deltaY);
+  };
+
+  const finishSheetDrag = (e: React.PointerEvent<HTMLElement>, cancelled: boolean) => {
+    const d = dismissDrag.current;
+    if (!d || d.pointerId !== e.pointerId) return;
+    dismissDrag.current = null;
+    try {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+    } catch {
+      // Ignore.
+    }
+    if (d.locked && sheet) {
+      sheet.release(cancelled ? 0 : computeVelocityY(d.samples));
+    }
+  };
 
   const toggleBrowserFullScreen = () => {
     if (document.fullscreenElement) {
       void document.exitFullscreen();
     } else {
-      // The whole page, not this overlay: menus and dialogs portal to <body> and must stay visible.
       void document.documentElement.requestFullscreen().then(
         () => (enteredBrowserFullScreen.current = true),
         () => undefined,
@@ -222,201 +425,281 @@ export function FullScreenPlayer() {
   if (!nowPlaying) return null;
   const { videoId, title, artist } = nowPlaying;
   const album = track?.album ?? null;
-  // With a right-hand column; on narrow windows that column fills the screen and the controls sit under it, without the artwork.
-  const column = showLyrics || showQueue;
-  // A music video on its own fills the window.
-  const theater = video && !column;
-  // ...and hides the controls and the pointer while it plays undisturbed.
+
   const hidden = theater && playing && idle ? ' pointer-events-none opacity-0' : '';
-  const corner = `${chrome} transition-[background-color,color,opacity] duration-300${hidden}`;
+  const artworkPoseScale = !playing ? ARTWORK_PAUSE_SCALE : scrubbing ? ARTWORK_DRAG_SCALE : 1;
+  const backdropMode = column || viewport.tablet || theater ? 'fullBlur' : 'mesh';
+
+  const initialOffset = sheet?.getSnapshot().offset ?? 0;
+
+  const renderArtworkBox = (className: string) => (
+    <div
+      ref={openArtRef}
+      className={`relative overflow-hidden rounded-(--bc-radius-sleeve) bg-[#1c1c1e] shadow-(--bc-shadow-sleeve) ${className}`}
+      style={{
+        transform: `scale(${artworkPoseScale})`,
+        transition: reducedMotion ? 'none' : `transform 500ms ${ARTWORK_POSE_EASING}`,
+      }}
+    >
+      {nowPlaying.artworkUrl && (
+        <img
+          key={nowPlaying.artworkUrl}
+          className="size-full object-cover"
+          src={sizedArtwork(nowPlaying.artworkUrl, 600)}
+          alt=""
+          referrerPolicy="no-referrer"
+          decoding="async"
+        />
+      )}
+      {motion && (
+        <MotionArtwork
+          key={motion.url}
+          motion={motion}
+          className="absolute inset-0 size-full object-cover opacity-0 transition-opacity duration-600 ease-in data-ready:opacity-100"
+          playing={playing}
+        />
+      )}
+      {video && !theater && <VideoSurface className="absolute inset-0" />}
+    </div>
+  );
+
+  const renderMetadata = (compact = false) => (
+    <div className="flex items-center gap-3">
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <PageLink
+            className={`min-w-0 max-w-full self-start truncate font-(family-name:--bc-font-family) font-bold text-white ${
+              compact ? 'text-[17px] leading-[1.25]' : 'text-[22px] leading-[1.2] tracking-(--bc-tracking-headline)'
+            } ${linkClass}`}
+            href={albumHref(album?.id ?? null)}
+            resolve={() => albumPageFor(videoId, album, [title, artist].filter(Boolean).join(' '))}
+          >
+            {title}
+          </PageLink>
+          {track?.explicit && <ExplicitBadge size={14} />}
+        </div>
+        <span
+          className={`truncate font-(family-name:--bc-font-family) text-white/72 ${
+            compact ? 'text-[14px] leading-[1.3]' : 'text-[16px] leading-[1.35] tracking-(--bc-tracking-body-lg)'
+          }`}
+        >
+          {artist && <Credits videoId={videoId} line={artist} artists={track?.artists ?? []} className={linkClass} />}
+          {artist && album?.name && ' — '}
+          {album?.name && (
+            <PageLink
+              className={linkClass}
+              href={albumHref(album.id ?? null)}
+              resolve={() => albumPageFor(videoId, album, [title, artist].filter(Boolean).join(' '))}
+            >
+              {album.name}
+            </PageLink>
+          )}
+        </span>
+        {!compact && <NerdStats />}
+      </div>
+      <FavoriteButton videoId={nowPlaying.videoId} className={chromeDiscButton} size={18} />
+      {track && <TrackMenu track={track} className={chromeDiscButton} placement="above-end" />}
+    </div>
+  );
+
+  const renderBottomRow = (includeVolume = false) => (
+    <div className="relative flex w-full items-center justify-center gap-10">
+      <BottomActionTile label="Lyrics" active={showLyrics} onClick={() => togglePanel('lyrics')} kind="lyrics" />
+      <BottomActionTile label="Up Next" active={showQueue} onClick={() => togglePanel('queue')} kind="queue" />
+      {includeVolume && (
+        <div
+          className="group/actions relative flex items-center [--volume-gap:36px]"
+          data-volume-open={volumeOpen || undefined}
+          onPointerLeave={() => setVolumeOpen(false)}
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setVolumeOpen(false);
+          }}
+        >
+          <span className={fadeForVolume} aria-hidden="true" />
+          <VolumeControl
+            open={volumeOpen}
+            onOpen={() => setVolumeOpen(true)}
+            className="grid size-(--bc-bottom-action) place-items-center rounded-[10px] text-white/75 hover:text-white"
+            iconSize={22}
+          />
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div
-      // Over everything but menus and dialogs, which portal above it. The on-dark colours come from tokens.css (data-full-screen).
-      // --art, the artwork's side: Apple's 461px at 1440px wide, and never taller than the screen leaves room for.
-      className="fixed inset-0 z-[calc(var(--z-contextual-menus)-2)] isolate animate-enter overflow-hidden text-primary [--art:min(32vw,calc(100dvh-330px),720px)] motion-reduce:[animation-name:fade-in] max-md:[--art:min(84vw,calc(100dvh-330px),420px)]"
+      ref={sheetRef}
+      className="fixed inset-0 z-[calc(var(--z-contextual-menus)-2)] isolate overflow-hidden text-white will-change-transform"
+      style={{
+        transform: `translate3d(0, ${initialOffset}px, 0)`,
+        cursor: theater && playing && idle ? 'none' : undefined,
+      }}
       role="dialog"
       aria-modal="true"
       aria-label="Now Playing"
       data-full-screen
       data-paused={!playing || undefined}
-      onPointerMove={wake}
-      onPointerDown={wake}
+      onPointerDown={onSheetPointerDown}
+      onPointerMove={onSheetPointerMove}
+      onPointerUp={(e) => finishSheetDrag(e, false)}
+      onPointerCancel={(e) => finishSheetDrag(e, true)}
       onKeyDown={wake}
-      style={theater && playing && idle ? { cursor: 'none' } : undefined}
     >
-      <MeshBackdrop artworkUrl={nowPlaying.artworkUrl} playing={playing} />
-      {theater && (
-        <div className="absolute inset-0 animate-fade-in bg-black">
-          <VideoSurface fit="contain" className="size-full" />
-        </div>
-      )}
+      <div ref={contentRef} className="relative flex size-full flex-col bg-[#121212]">
+        <MeshBackdrop artworkUrl={nowPlaying.artworkUrl} seamY={seamY} mode={backdropMode} />
 
-      <button ref={close} className={`${corner} top-4 left-5`} aria-label="Close" onClick={() => setFullScreen(false)}>
-        <X size={20} />
-      </button>
-      {/* The music video's quality, just inside the full-screen button. */}
-      {video && (
-        <VideoQuality className={`absolute top-[18px] z-1${hidden}${document.fullscreenEnabled ? ' right-15' : ' right-5'}`} />
-      )}
-      {document.fullscreenEnabled && (
-        <button
-          className={`${corner} top-4 right-5`}
-          aria-label={browserFullScreen ? 'Exit full screen' : 'Enter full screen'}
-          onClick={toggleBrowserFullScreen}
-        >
-          {browserFullScreen ? <Minimize size={18} /> : <Maximize size={18} />}
-        </button>
-      )}
+        {theater && (
+          <div className="absolute inset-0 bg-black">
+            <VideoSurface fit="contain" className="size-full" />
+          </div>
+        )}
 
-      {/* Apple's grid areas "controls lyrics": the artwork column, then the lyrics. */}
-      <div
-        className={
-          theater
-            ? `absolute inset-x-0 bottom-0 flex justify-center bg-[linear-gradient(to_top,rgb(0_0_0/0.72),rgb(0_0_0/0.35)_55%,transparent)] px-6 pt-32 pb-16 transition-opacity duration-300${hidden}`
-            : `grid h-full items-center justify-center gap-x-[clamp(48px,7vw,144px)] px-[clamp(24px,9vw,144px)] py-16 max-md:px-6 max-md:pb-18 ${
-                column
-                  ? 'grid-cols-[var(--art)_minmax(0,38vw)] max-md:grid-cols-[minmax(0,1fr)] max-md:grid-rows-[minmax(0,1fr)_auto] max-md:items-stretch max-md:gap-y-4'
-                  : 'grid-cols-[var(--art)]'
-              }`
-        }
-        data-lyrics={column || undefined}
-      >
-        <section
-          className={
-            theater ? 'flex w-[min(720px,100%)] min-w-0 flex-col' : `flex w-(--art) min-w-0 flex-col${column ? ' max-md:order-2 max-md:w-full' : ''}`
-          }
-          aria-label="Player"
+        {/* 32px top dismiss strip (`DISMISS_STRIP_HEIGHT`, NowPlayingScreen.kt:271). */}
+        <div
+          className={`relative z-2 flex flex-none items-center justify-between px-4 pt-[env(safe-area-inset-top,0px)] transition-opacity duration-300${hidden}`}
+          style={{ minHeight: `${DISMISS_STRIP_HEIGHT}px` }}
         >
-          {/* Shrinks a touch while paused, as Apple's does. Beside a column, a music video plays here at 16:9. */}
-          <div
-            className={`relative w-(--art) rounded-[10px] transition-[scale] duration-450 ease-[cubic-bezier(0.34,1.3,0.64,1)] motion-reduce:transition-none${
-              video ? ' aspect-video overflow-hidden bg-black' : ' aspect-square'
-            }${playing ? '' : ' scale-92'}${column ? ' max-md:hidden' : ''}${theater ? ' hidden' : ''}`}
+          <button
+            ref={closeRef}
+            type="button"
+            className="grid size-9 place-items-center rounded-full text-white/75 transition-colors hover:bg-white/12 hover:text-white"
+            aria-label="Close"
+            onClick={handleClose}
           >
-            {nowPlaying.artworkUrl && (
+            <ChevronDown size={22} />
+          </button>
+
+          {/* Grab pill indicator */}
+          <div className="pointer-events-none h-1 w-9 rounded-full bg-white/25" aria-hidden="true" />
+
+          <div className="flex items-center gap-2">
+            {video && <VideoQuality />}
+            {document.fullscreenEnabled && (
+              <button
+                type="button"
+                className="grid size-9 place-items-center rounded-full text-white/75 transition-colors hover:bg-white/12 hover:text-white"
+                aria-label={browserFullScreen ? 'Exit full screen' : 'Enter full screen'}
+                onClick={toggleBrowserFullScreen}
+              >
+                {browserFullScreen ? <Minimize size={18} /> : <Maximize size={18} />}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Main responsive player body */}
+        {theater ? (
+          <div
+            className={`absolute inset-x-0 bottom-0 z-1 flex justify-center bg-[linear-gradient(to_top,rgb(0_0_0/0.78),rgb(0_0_0/0.4)_58%,transparent)] px-(--bc-player-gutter) pt-28 pb-[max(env(safe-area-inset-bottom,0px),20px)] transition-opacity duration-300${hidden}`}
+          >
+            <div className="flex w-full max-w-[680px] flex-col gap-3">
+              {renderMetadata()}
+              <ThinSlider onScrubDragChange={setScrubbing} />
+              <Transport />
+              {renderBottomRow(viewport.landscape)}
+            </div>
+          </div>
+        ) : viewport.landscape ? (
+          <div className="mx-auto grid min-h-0 w-full max-w-[1120px] flex-1 grid-cols-[minmax(260px,420px)_minmax(300px,1fr)] items-center gap-x-[clamp(32px,6vw,96px)] px-(--bc-player-gutter) pb-6">
+            <section className="flex min-h-0 flex-col items-center justify-center gap-5" aria-label="Player">
+              {renderArtworkBox(
+                `w-full ${video ? 'aspect-video bg-black' : 'aspect-square'} max-w-[min(38vw,calc(100dvh-220px),420px)]`,
+              )}
+              {(!column || viewport.shortLandscape) && renderBottomRow(true)}
+            </section>
+
+            <section className="flex h-full min-h-0 flex-col justify-center" aria-label={showLyrics ? 'Lyrics' : showQueue ? 'Up Next' : 'Controls'}>
+              {showLyrics ? (
+                <div className="flex h-[min(78dvh,640px)] min-h-0 flex-col" data-no-sheet-drag>
+                  <LyricsPanel variant="full" />
+                  {!viewport.shortLandscape && (
+                    <div className="mt-3 flex flex-col gap-1 border-t border-white/10 pt-3">
+                      <ThinSlider onScrubDragChange={setScrubbing} />
+                      <Transport compact />
+                      {renderBottomRow(true)}
+                    </div>
+                  )}
+                </div>
+              ) : showQueue ? (
+                <div className="flex h-[min(78dvh,640px)] min-h-0 flex-col" data-no-sheet-drag>
+                  <div className="min-h-0 flex-1 overflow-hidden [mask-image:linear-gradient(180deg,#000_calc(100%-64px),transparent)]">
+                    <UpNext />
+                  </div>
+                  {!viewport.shortLandscape && (
+                    <div className="mt-3 flex flex-col gap-1 border-t border-white/10 pt-3">
+                      <ThinSlider onScrubDragChange={setScrubbing} />
+                      <Transport compact />
+                      {renderBottomRow(true)}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="flex w-full max-w-[440px] flex-col gap-3 justify-self-center">
+                  {renderMetadata()}
+                  <ThinSlider onScrubDragChange={setScrubbing} />
+                  <Transport />
+                </div>
+              )}
+            </section>
+          </div>
+        ) : (
+          /* Portrait layout: 30px `--bc-player-gutter`, max 560px (`NowPlayingScreen.kt:402-409`). */
+          <div className="mx-auto flex min-h-0 w-full max-w-(--bc-player-max) flex-1 flex-col px-(--bc-player-gutter) pb-[max(env(safe-area-inset-bottom,0px),16px)]">
+            {column ? (
               <>
-                <img
-                  key={`glow-${nowPlaying.artworkUrl}`}
-                  // The radiosity glow: a small copy, blurred and saturated, behind the artwork.
-                  className={`${artworkLayer} -z-1 translate-y-2 scale-96 blur-[20px] saturate-200 data-loaded:opacity-40`}
-                  src={sizedArtwork(nowPlaying.artworkUrl, 60)}
-                  alt=""
-                  referrerPolicy="no-referrer"
-                  decoding="async"
-                  onLoad={(e) => e.currentTarget.setAttribute('data-loaded', '')}
-                />
-                <img
-                  key={nowPlaying.artworkUrl}
-                  className={`${artworkLayer} bg-[#ffffff12] shadow-[0_4px_10px_#0000001a] data-loaded:opacity-100`}
-                  src={sizedArtwork(nowPlaying.artworkUrl, 600)}
-                  alt=""
-                  referrerPolicy="no-referrer"
-                  decoding="async"
-                  onLoad={(e) => e.currentTarget.setAttribute('data-loaded', '')}
-                />
+                {/* Collapsed 60px header with 54px thumbnail (`NowPlayingScreen.kt:235-236`). */}
+                <div className="flex h-(--bc-player-header) flex-none items-center gap-3">
+                  <div className="size-(--bc-player-thumb) flex-none overflow-hidden rounded-(--bc-radius-art) bg-[#1c1c1e] shadow-(--bc-shadow-sleeve)">
+                    {nowPlaying.artworkUrl && (
+                      <img
+                        className="size-full object-cover"
+                        src={sizedArtwork(nowPlaying.artworkUrl, 108)}
+                        alt=""
+                        referrerPolicy="no-referrer"
+                        decoding="async"
+                      />
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">{renderMetadata(true)}</div>
+                </div>
+
+                <div className="mt-2 flex min-h-0 flex-1 flex-col" data-no-sheet-drag>
+                  {showLyrics ? (
+                    <LyricsPanel variant="full" />
+                  ) : (
+                    <div className="flex min-h-0 flex-1 flex-col overflow-hidden [mask-image:linear-gradient(180deg,#000_calc(100%-56px),transparent)]">
+                      <UpNext />
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-2 flex flex-none flex-col gap-1">
+                  <ThinSlider onScrubDragChange={setScrubbing} />
+                  <Transport compact />
+                  <div className="mt-1">{renderBottomRow(false)}</div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex min-h-0 flex-1 items-center justify-center py-2">
+                  {renderArtworkBox(
+                    `w-full ${video ? 'aspect-video bg-black' : 'aspect-square'} max-w-[min(calc(100vw-2*var(--bc-player-gutter)),calc(100dvh-390px),500px)]`,
+                  )}
+                </div>
+
+                <div className="mt-(--bc-player-art-title-gap) flex flex-none flex-col">
+                  {renderMetadata()}
+                  <div className="mt-2">
+                    <ThinSlider onScrubDragChange={setScrubbing} />
+                  </div>
+                  <Transport />
+                  <div className="mt-2">{renderBottomRow(false)}</div>
+                </div>
               </>
             )}
-            {/* Apple's motion artwork, over the cover once it's playing. */}
-            {motion && (
-              <MotionArtwork
-                key={motion.url}
-                motion={motion}
-                className="absolute inset-0 size-full rounded-[inherit] object-cover opacity-0 transition-opacity duration-600 ease-in data-ready:opacity-100"
-                playing={playing}
-              />
-            )}
-            {video && !theater && <VideoSurface className="absolute inset-0" />}
           </div>
-
-          <div className={`flex items-center gap-3${theater ? '' : ' mt-[clamp(20px,3.2vh,32px)]'}${column ? ' max-md:mt-0' : ''}`}>
-            {/* As the mini player's: the title opens the album, each credited name its artist. */}
-            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <div className="flex min-w-0 items-center">
-                <PageLink
-                  className={`min-w-0 max-w-full self-start truncate type-[600_17px/22px] ${pageLink}`}
-                  href={albumHref(album?.id ?? null)}
-                  resolve={() => albumPageFor(videoId, album, [title, artist].filter(Boolean).join(' '))}
-                >
-                  {title}
-                </PageLink>
-                {track?.explicit && <ExplicitBadge size={14} />}
-              </div>
-              <span className="truncate type-title-3 text-secondary">
-                {artist && <Credits videoId={videoId} line={artist} artists={track?.artists ?? []} className={pageLink} />}
-                {artist && album?.name && ' — '}
-                {album?.name && (
-                  <PageLink
-                    className={pageLink}
-                    href={albumHref(album.id ?? null)}
-                    resolve={() => albumPageFor(videoId, album, [title, artist].filter(Boolean).join(' '))}
-                  >
-                    {album.name}
-                  </PageLink>
-                )}
-              </span>
-              <NerdStats />
-            </div>
-            <FavoriteButton
-              videoId={nowPlaying.videoId}
-              className="grid size-8 flex-none place-items-center rounded-full bg-quinary text-primary hover:bg-quaternary"
-              size={18}
-            />
-            {track && (
-              <TrackMenu
-                track={track}
-                className="grid size-8 flex-none place-items-center rounded-full bg-quinary text-primary hover:bg-quaternary"
-                placement="above-end"
-              />
-            )}
-          </div>
-
-          <Scrubber />
-          <Transport />
-        </section>
-
-        {showLyrics && (
-          <section className="flex min-h-0 animate-fade-in self-stretch" aria-label="Lyrics">
-            <LyricsPanel variant="full" />
-          </section>
         )}
-        {showQueue && (
-          // Up Next in the right-hand column: the side panel's list, laid out as a column.
-          <section
-            className="flex min-h-0 animate-fade-in flex-col self-stretch [mask-image:linear-gradient(180deg,#000_calc(100%-80px),transparent)]"
-            aria-label="Up Next"
-          >
-            <UpNext />
-          </section>
-        )}
-      </div>
-
-      <button
-        className={`${corner} bottom-5 left-5 aria-pressed:text-primary`}
-        aria-label="Lyrics"
-        aria-pressed={showLyrics}
-        onClick={() => togglePanel('lyrics')}
-      >
-        {showLyrics ? <LyricsActiveIcon size={18} /> : <LyricsIcon size={18} />}
-      </button>
-      {/* Up Next, with the speaker beside it: the level slides in over Up Next, as it does in the pill. */}
-      <div
-        className={`group/actions absolute right-5 bottom-5 z-1 flex items-center [--volume-gap:36px] transition-opacity duration-300${hidden}`}
-        data-volume-open={volumeOpen || undefined}
-        onPointerLeave={() => setVolumeOpen(false)}
-        onBlur={(event) => {
-          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setVolumeOpen(false);
-        }}
-      >
-        <button
-          className={`${chromeButton} ${fadeForVolume} aria-pressed:text-primary`}
-          aria-label="Up Next"
-          aria-pressed={showQueue}
-          onClick={() => togglePanel('queue')}
-        >
-          <UpNextIcon size={18} />
-        </button>
-        <VolumeControl open={volumeOpen} onOpen={() => setVolumeOpen(true)} className={chromeButton} iconSize={18} />
       </div>
     </div>
   );

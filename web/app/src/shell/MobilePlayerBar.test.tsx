@@ -1,9 +1,10 @@
 // @vitest-environment happy-dom
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { usePlayer } from '@/state/player';
 import { MobilePlayerBar } from './MobilePlayerBar';
+import { PlayerSheetContext, PlayerSheetController } from './PlayerSheetMotion';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -70,5 +71,42 @@ describe('MobilePlayerBar', () => {
     expect(region?.textContent).toContain('Midnight City');
     expect(region?.textContent).toContain('M83');
     expect(mount.querySelector('button[aria-label="Pause"]')).not.toBeNull();
+  });
+
+  it('opens the PlayerSheetController when the track button is tapped', () => {
+    const onShown = vi.fn();
+    const sheet = new PlayerSheetController(onShown);
+    sheet.setReducedMotion(true);
+
+    usePlayer.setState({
+      nowPlaying: {
+        videoId: 'abc',
+        title: 'Midnight City',
+        artist: 'M83',
+        artworkUrl: null,
+        durationSec: 243,
+        streamInfo: null,
+        stream: null,
+      },
+      status: 'playing',
+      queue: [],
+      index: -1,
+    });
+
+    root = createRoot(mount);
+    act(() =>
+      root!.render(
+        <PlayerSheetContext.Provider value={sheet}>
+          <MobilePlayerBar />
+        </PlayerSheetContext.Provider>,
+      ),
+    );
+
+    const openBtn = mount.querySelector<HTMLButtonElement>('button[aria-label="Open full screen player"]');
+    expect(openBtn).not.toBeNull();
+    act(() => openBtn!.click());
+    expect(onShown).toHaveBeenCalledWith(true);
+    expect(sheet.getSnapshot().phase).toBe('open');
+    sheet.dispose();
   });
 });
