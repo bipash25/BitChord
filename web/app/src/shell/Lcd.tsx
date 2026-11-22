@@ -1,6 +1,7 @@
 import { Maximize2 } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
+import { MARQUEE_ARTIST_STAGGER_MS, Marquee } from '@/components/Marquee';
 import { LogoMark } from '@/components/icons/LogoMark';
 import { ExplicitBadge } from '@/components/music/ExplicitBadge';
 import { VideoSurface } from '@/components/music/VideoSurface';
@@ -90,7 +91,7 @@ export function Credits({
   );
 }
 
-const titleClass = 'min-w-0 max-w-full self-start truncate font-(family-name:--bc-font-family) text-[13px] leading-[1.2] font-bold tracking-(--bc-tracking-accessory-title) text-(--bc-on-surface)';
+const titleClass = 'font-(family-name:--bc-font-family) text-[13px] leading-[1.2] font-bold tracking-(--bc-tracking-accessory-title) text-(--bc-on-surface)';
 
 export function Lcd() {
   const nowPlaying = usePlayer((s) => s.nowPlaying);
@@ -103,6 +104,7 @@ export function Lcd() {
     return entry && entry.videoId === s.nowPlaying?.videoId ? entry : null;
   });
   const video = useHasVideo(nowPlaying?.videoId);
+  const [titleOverflows, setTitleOverflows] = useState(false);
 
   if (!nowPlaying) {
     return (
@@ -150,26 +152,32 @@ export function Lcd() {
         {title ? (
           // The song's name opens its album; an explicit song carries the E after it.
           <div className="flex min-w-0 items-center">
-            <PageLink
-              className={`${titleClass} ${pageLink}`}
-              href={albumHref(album?.id ?? null)}
-              resolve={() => albumPageFor(videoId, album, [title, artist].filter(Boolean).join(' '))}
-            >
-              {title}
-            </PageLink>
+            <Marquee measureKey={title} onOverflowChange={setTitleOverflows} className={titleClass}>
+              <PageLink
+                className={pageLink}
+                href={albumHref(album?.id ?? null)}
+                resolve={() => albumPageFor(videoId, album, [title, artist].filter(Boolean).join(' '))}
+              >
+                {title}
+              </PageLink>
+            </Marquee>
             {track?.explicit && <ExplicitBadge size={11} />}
           </div>
         ) : (
-          <span className={titleClass}>{status === 'loading' ? 'Loading…' : ''}</span>
+          <span className={`truncate ${titleClass}`}>{status === 'loading' ? 'Loading…' : ''}</span>
         )}
         {status === 'error' ? (
           <span className="truncate font-(family-name:--bc-font-family) text-[12px] leading-[1.2] tracking-(--bc-tracking-accessory-artist) text-(--bc-accent-red)">
             {error}
           </span>
         ) : (
-          <span className="truncate font-(family-name:--bc-font-family) text-[12px] leading-[1.2] tracking-(--bc-tracking-accessory-artist) text-(--bc-on-surface-variant)">
+          <Marquee
+            measureKey={artist}
+            startDelayMs={titleOverflows ? MARQUEE_ARTIST_STAGGER_MS : 0}
+            className="font-(family-name:--bc-font-family) text-[12px] leading-[1.2] tracking-(--bc-tracking-accessory-artist) text-(--bc-on-surface-variant)"
+          >
             {artist ? <Credits videoId={videoId} line={artist} artists={track?.artists ?? []} /> : status === 'loading' ? 'Loading…' : ''}
-          </span>
+          </Marquee>
         )}
       </div>
       <Progress />

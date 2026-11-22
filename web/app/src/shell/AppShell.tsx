@@ -1,20 +1,23 @@
 import { lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Outlet } from 'react-router';
+import { IosAlert, IosAlertAction, IosAlertBody, IosAlertRule } from '@/components/IosAlert';
 import { useExtension } from '@/extension/useExtension';
 import { sizedArtwork } from '@/lib/artwork';
-import { useReducedMotion } from '@/lib/motionPrefs';
+import { useReducedBlur, useReducedMotion } from '@/lib/motionPrefs';
+import { queryClient } from '@/lib/queryClient';
 import { resumeSession } from '@/party/listenTogether';
 import { startPartySync } from '@/party/partySync';
 import { startHistoryReporting } from '@/playback/historyReporting';
 import { startLivePresence } from '@/playback/livePresence';
 import { usePlayer } from '@/state/player';
 import { useUi } from '@/state/ui';
-import { Banner, bannerButtonClass } from './Banner';
 import { FloatingTabBar } from './FloatingTabBar';
 import { MobilePlayerBar } from './MobilePlayerBar';
 import { MobileTopBar } from './MobileTopBar';
 import { PlayerBar } from './PlayerBar';
 import { PlayerSheetContext, PlayerSheetController } from './PlayerSheetMotion';
+import { PullToRefresh } from './PullToRefresh';
+import { QueueActionNoticeHost } from './QueueActionNotice';
 import { SidePanel } from './SidePanel';
 import { Sidebar } from './Sidebar';
 import { useKeyboardShortcuts } from './useKeyboardShortcuts';
@@ -49,6 +52,19 @@ export function AppShell() {
   const artworkUrl = usePlayer((s) => s.nowPlaying?.artworkUrl ?? null);
   const hasMiniPlayer = usePlayer((s) => Boolean(s.nowPlaying) || s.status === 'loading' || s.status === 'error');
   const reducedMotion = useReducedMotion();
+  const reducedBlur = useReducedBlur();
+  const scrollPageRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (reducedBlur) {
+      document.documentElement.dataset.reducedBlur = 'true';
+    } else {
+      delete document.documentElement.dataset.reducedBlur;
+    }
+    return () => {
+      delete document.documentElement.dataset.reducedBlur;
+    };
+  }, [reducedBlur]);
 
   const [sheetController] = useState(
     () =>
@@ -91,19 +107,19 @@ export function AppShell() {
     }
   }, [fullScreen, sheetController]);
 
-  let banner = null;
+  let relayAlert = null;
   if (extension.state === 'missing' && !bannerDismissed) {
-    banner = (
-      <Banner
-        title="The server relay is unreachable."
-        detail="Playback, search, lyrics and addons travel through BitChord’s server relay, and it didn’t answer. Check your connection and reload."
-        action={
-          <button className={bannerButtonClass} onClick={() => location.reload()}>
-            Reload
-          </button>
-        }
-        onDismiss={dismissBanner}
-      />
+    relayAlert = (
+      <IosAlert onClose={dismissBanner} label="Server relay unreachable">
+        <IosAlertBody
+          title="Server Relay Unreachable"
+          message="Playback, search, lyrics and addons travel through BitChord’s server relay, and it didn’t answer. Check your connection and reload."
+        />
+        <IosAlertRule />
+        <IosAlertAction label="Reload" emphasised onClick={() => location.reload()} />
+        <IosAlertRule />
+        <IosAlertAction label="Dismiss" onClick={dismissBanner} />
+      </IosAlert>
     );
   }
 
@@ -116,13 +132,15 @@ export function AppShell() {
 
   return (
     <PlayerSheetContext.Provider value={sheetController}>
-      <div className="grid h-full grid-rows-[minmax(0,1fr)_auto]">
+      <div className="grid h-full grid-rows-[minmax(0,1fr)]">
         {/* The side panel slides in from beyond the right edge; never let it scroll the page. */}
         <div className="relative min-h-0 overflow-hidden">
           <Sidebar />
           <MobileTopBar />
+          <PullToRefresh scrollContainerRef={scrollPageRef} onRefresh={() => queryClient.invalidateQueries()} />
           {/* The page scrolls under the fixed sidebar and floating bars. */}
           <main
+            ref={scrollPageRef}
             id="scrollable-page"
             className="absolute inset-0 overflow-x-hidden overflow-y-auto bg-(--bc-bg) pl-(--bc-sidebar-w) [scrollbar-gutter:stable] data-tint:bg-(--bc-page-surface) max-lg:pt-[calc(env(safe-area-inset-top,0px)+var(--bc-topbar-h))] max-lg:pl-0"
           >
@@ -141,12 +159,13 @@ export function AppShell() {
             style={{ height: tapGuardHeight }}
             aria-hidden="true"
           />
+          <QueueActionNoticeHost />
           <PlayerBar />
           <MobilePlayerBar />
           <FloatingTabBar />
           <SidePanel />
         </div>
-        {banner}
+        {relayAlert}
         {sheetSnapshot.shown && (
           <Suspense fallback={null}>
             <FullScreenPlayer />

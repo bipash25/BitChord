@@ -231,7 +231,7 @@ export default function SearchPage() {
 
   return (
     <>
-      <div className="sticky top-0 z-[calc(var(--z-default)+5)] flex flex-col items-center gap-2 bg-(--bc-bg)/92 px-(--bc-page-gutter) pt-3 pb-2 [backdrop-filter:blur(24px)]">
+      <div className="bc-top-bar-blur sticky top-0 z-[calc(var(--z-default)+5)] flex flex-col items-center gap-2 border-b-[0.5px] border-b-(--bc-glass-edge) px-(--bc-page-gutter) pt-3 pb-2">
         <SearchField
           initial={query}
           onSearch={(q) => {

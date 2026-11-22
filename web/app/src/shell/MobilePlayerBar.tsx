@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { MARQUEE_ARTIST_STAGGER_MS, Marquee } from '@/components/Marquee';
 import { LogoMark } from '@/components/icons/LogoMark';
 import { ForwardIcon, PauseIcon, PlayIcon } from '@/components/icons/Transport';
 import { sizedArtwork } from '@/lib/artwork';
@@ -32,6 +33,7 @@ export function MobilePlayerBar() {
   const reducedMotion = useReducedMotion();
   const video = useHasVideo(nowPlaying?.videoId);
   const artRef = useRef<HTMLSpanElement>(null);
+  const [titleOverflows, setTitleOverflows] = useState(false);
 
   const visible = Boolean(nowPlaying) || status === 'loading' || status === 'error';
 
@@ -117,17 +119,23 @@ export function MobilePlayerBar() {
               )}
             </span>
             <span className="flex min-w-0 flex-1 flex-col">
-              <span
-                className={`truncate font-(family-name:--bc-font-family) text-[16px] leading-[1.25] font-semibold tracking-(--bc-tracking-title-md) ${
+              <Marquee
+                measureKey={title}
+                onOverflowChange={setTitleOverflows}
+                className={`font-(family-name:--bc-font-family) text-[16px] leading-[1.25] font-semibold tracking-(--bc-tracking-title-md) ${
                   status === 'error' ? 'text-(--bc-accent-red)' : 'text-(--bc-on-surface)'
                 }`}
               >
                 {title || (status === 'loading' ? 'Loading…' : '')}
-              </span>
+              </Marquee>
               {artist && (
-                <span className="truncate font-(family-name:--bc-font-family) text-[14px] leading-[1.25] font-normal tracking-(--bc-tracking-body) text-(--bc-on-surface-variant)">
+                <Marquee
+                  measureKey={artist}
+                  startDelayMs={titleOverflows ? MARQUEE_ARTIST_STAGGER_MS : 0}
+                  className="font-(family-name:--bc-font-family) text-[14px] leading-[1.25] font-normal tracking-(--bc-tracking-body) text-(--bc-on-surface-variant)"
+                >
                   {artist}
-                </span>
+                </Marquee>
               )}
             </span>
           </button>

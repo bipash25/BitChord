@@ -7,8 +7,9 @@ import {
   AndroidSearchIcon,
   type NavIconProps,
 } from '@/components/icons/NavIcons';
-import { useReducedMotion } from '@/lib/motionPrefs';
-import { TAB_PILL_SPRING, TAB_PILL_SQUASH, TAB_PILL_STRETCH, springStep } from '@/lib/spring';
+import { GlassPillMotion, PILL_GROW_PX } from '@/lib/glassPillMotion';
+import { useReducedBlur, useReducedMotion } from '@/lib/motionPrefs';
+import { TAB_PILL_SPRING, springStep } from '@/lib/spring';
 import { preloadRoute } from '@/pageRegistry';
 
 export interface FloatingTab {
@@ -27,7 +28,7 @@ export const FLOATING_TABS: readonly FloatingTab[] = [
 
 const TAB_GAP = 6;
 const DRAG_SLOP_PX = 6;
-const SETTLE_EPSILON = 0.02;
+const PILL_REST_HEIGHT = 54; // 62px bar - 2 × 4px inset
 
 /** Returns the tab index matching [pathname], or null when on a pushed detail/settings route. */
 export function tabIndexForPath(pathname: string): number | null {
@@ -43,16 +44,17 @@ export function isRootTabPath(pathname: string): boolean {
 }
 
 /**
- * Android-ported floating bottom tab bar (FloatingBottomBar.kt + spec §3.4, §4.3).
- *
- * Shown below 1000px (lg:hidden). 62px capsule with 19px screen gutters (capped
- * at 440px), frosted 24px material, and a JS-spring selection pill that stretches
- * horizontally in flight and supports drag-to-switch across tabs.
+ * Android-ported floating bottom tab bar (`FloatingBottomBar.kt` +
+ * `GlassSelectionPill.kt`, spec §3.4, §4.3):
+ * 62px frosted capsule with 19px gutters, 4px inset, and a spring-driven
+ * selection pill that lifts on press/drag (+9px), squashes by acceleration
+ * (±12%), and hands over cleanly to its flat fill on landing (`τ 0.09/0.05`).
  */
 export function FloatingTabBar() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const reduceMotion = useReducedMotion();
+  const reducedBlur = useReducedBlur();
 
   const matchedTab = tabIndexForPath(pathname);
   const [rememberedTab, setRememberedTab] = useState(() => matchedTab ?? 0);
@@ -66,18 +68,15 @@ export function FloatingTabBar() {
 
   const rowRef = useRef<HTMLDivElement>(null);
   const pillRef = useRef<HTMLDivElement>(null);
+  const pillRimRef = useRef<HTMLDivElement>(null);
   const iconRefs = useRef<(HTMLSpanElement | null)[]>([]);
   const [rowWidth, setRowWidth] = useState(0);
 
-  // Spring state lives in refs so 60/120fps rAF steps never trigger React re-renders.
   const animRef = useRef({
-    pillPos: 0,
-    pillVel: 0,
+    motion: new GlassPillMotion(selectedIndex),
     glyphScales: FLOATING_TABS.map((_, i): number => (i === selectedIndex ? 1.08 : 1)),
     glyphVels: FLOATING_TABS.map((): number => 0),
-    targetIndex: selectedIndex,
     activeVisualIndex: selectedIndex,
-    dragOffset: 0,
     rowWidth: 0,
     initialized: false,
     rafId: 0,
@@ -105,15 +104,33 @@ export function FloatingTabBar() {
   const stepPx = rowWidth > 0 ? (rowWidth + TAB_GAP) / FLOATING_TABS.length : 0;
   const tabWidthPx = rowWidth > 0 ? (rowWidth - TAB_GAP * (FLOATING_TABS.length - 1)) / FLOATING_TABS.length : 0;
 
-  const paintFrame = (pillPos: number, lag: number, glyphScales: number[]) => {
-    if (pillRef.current && animRef.current.rowWidth > 0) {
-      const sx = 1 + lag * TAB_PILL_STRETCH;
-      const sy = 1 - lag * TAB_PILL_STRETCH * TAB_PILL_SQUASH;
-      pillRef.current.style.transform = `translate3d(${pillPos}px, 0, 0) scaleX(${sx}) scaleY(${sy})`;
+  const paintFrame = () => {
+    const s = animRef.current;
+    const m = s.motion;
+    const pill = pillRef.current;
+    if (pill && s.rowWidth > 0) {
+      const step = (s.rowWidth + TAB_GAP) / FLOATING_TABS.length;
+      const tabW = (s.rowWidth - TAB_GAP * (FLOATING_TABS.length - 1)) / FLOATING_TABS.length;
+      const liveW = (tabW + PILL_GROW_PX * m.liftX) * (1 + m.deviation);
+      const liveH = (PILL_REST_HEIGHT + PILL_GROW_PX * m.liftY) * (1 - m.deviation);
+      const sx = tabW > 0 ? liveW / tabW : 1;
+      const sy = liveH / PILL_REST_HEIGHT;
+      const tx = m.position * step;
+      pill.style.transform = `translate3d(${tx}px, 0, 0) scaleX(${sx}) scaleY(${sy})`;
+
+      const rim = reducedBlur ? 0 : m.rimAlpha();
+      if (rim > 0.005) {
+        pill.style.boxShadow = `0 2px 12px rgba(0, 0, 0, ${(0.3 * rim).toFixed(3)})`;
+      } else {
+        pill.style.boxShadow = 'none';
+      }
+      if (pillRimRef.current) {
+        pillRimRef.current.style.opacity = String(rim);
+      }
     }
     for (let i = 0; i < FLOATING_TABS.length; i++) {
       const el = iconRefs.current[i];
-      if (el) el.style.transform = `scale(${glyphScales[i]})`;
+      if (el) el.style.transform = `scale(${s.glyphScales[i]})`;
     }
   };
 
@@ -125,21 +142,8 @@ export function FloatingTabBar() {
       const dt = s.lastTime ? Math.min((now - s.lastTime) / 1000, 0.05) : 1 / 60;
       s.lastTime = now;
 
-      const step = s.rowWidth > 0 ? (s.rowWidth + TAB_GAP) / FLOATING_TABS.length : 0;
-      const pillTarget = s.targetIndex * step + s.dragOffset;
-      let settled = true;
-
-      if (step > 0) {
-        const [nx, nv] = springStep(s.pillPos, s.pillVel, pillTarget, dt, TAB_PILL_SPRING.stiffness, TAB_PILL_SPRING.damping);
-        s.pillPos = nx;
-        s.pillVel = nv;
-        if (Math.abs(pillTarget - nx) > SETTLE_EPSILON || Math.abs(nv) > SETTLE_EPSILON) {
-          settled = false;
-        } else {
-          s.pillPos = pillTarget;
-          s.pillVel = 0;
-        }
-      }
+      const motionActive = s.motion.step(dt, now / 1000);
+      let settled = !motionActive;
 
       const activeIdx = s.activeVisualIndex;
       for (let i = 0; i < FLOATING_TABS.length; i++) {
@@ -155,10 +159,9 @@ export function FloatingTabBar() {
         }
       }
 
-      const lag = step > 0 ? Math.min(1, Math.max(0, Math.abs(pillTarget - s.pillPos) / step)) : 0;
-      paintFrame(s.pillPos, lag, s.glyphScales);
+      paintFrame();
 
-      if (settled && s.dragOffset === 0) {
+      if (settled) {
         s.rafId = 0;
       } else {
         s.rafId = requestAnimationFrame(tick);
@@ -176,11 +179,11 @@ export function FloatingTabBar() {
       const s = animRef.current;
       s.rowWidth = width;
       const step = width > 0 ? (width + TAB_GAP) / FLOATING_TABS.length : 0;
+      s.motion.stepPx = step;
       if (!s.initialized && width > 0) {
         s.initialized = true;
-        s.pillPos = s.targetIndex * step;
-        s.pillVel = 0;
-        paintFrame(s.pillPos, 0, s.glyphScales);
+        s.motion.snapTo(s.motion.index);
+        paintFrame();
       }
     });
     observer.observe(node);
@@ -189,21 +192,21 @@ export function FloatingTabBar() {
 
   useEffect(() => {
     const s = animRef.current;
-    s.targetIndex = selectedIndex;
+    s.motion.reduceMotion = reduceMotion;
     s.activeVisualIndex = selectedIndex;
-    s.dragOffset = 0;
-    const step = s.rowWidth > 0 ? (s.rowWidth + TAB_GAP) / FLOATING_TABS.length : 0;
     if (reduceMotion || !s.initialized) {
       if (s.rafId) {
         cancelAnimationFrame(s.rafId);
         s.rafId = 0;
       }
-      s.pillPos = selectedIndex * step;
-      s.pillVel = 0;
+      s.motion.snapTo(selectedIndex);
       s.glyphScales = FLOATING_TABS.map((_, i) => (i === selectedIndex ? 1.08 : 1));
       s.glyphVels = FLOATING_TABS.map(() => 0);
-      paintFrame(s.pillPos, 0, s.glyphScales);
+      paintFrame();
       return;
+    }
+    if (s.motion.index !== selectedIndex) {
+      s.motion.animateTo(selectedIndex);
     }
     startLoop();
   }, [selectedIndex, reduceMotion]);
@@ -243,6 +246,10 @@ export function FloatingTabBar() {
             totalDx: 0,
             suppressClick: false,
           };
+          if (!reduceMotion) {
+            animRef.current.motion.press();
+            startLoop();
+          }
         }}
         onPointerMove={(e) => {
           const d = dragRef.current;
@@ -252,6 +259,7 @@ export function FloatingTabBar() {
           if (!d.dragging && Math.abs(dx) > DRAG_SLOP_PX) {
             d.dragging = true;
             d.suppressClick = true;
+            animRef.current.motion.startDrag();
             e.currentTarget.setPointerCapture?.(e.pointerId);
           }
           if (!d.dragging) return;
@@ -259,11 +267,11 @@ export function FloatingTabBar() {
           const nextHover = Math.round(absoluteFloat);
           if (nextHover !== dragHoverIndex) setDragHoverIndex(nextHover);
           animRef.current.activeVisualIndex = nextHover;
-          animRef.current.dragOffset = absoluteFloat * stepPx - selectedIndex * stepPx;
+          animRef.current.motion.dragTo(absoluteFloat);
           if (reduceMotion) {
-            const snapped = absoluteFloat * stepPx;
-            animRef.current.pillPos = snapped;
-            paintFrame(snapped, 0, FLOATING_TABS.map((_, i) => (i === nextHover ? 1.08 : 1)));
+            animRef.current.motion.snapTo(nextHover);
+            animRef.current.glyphScales = FLOATING_TABS.map((_, i) => (i === nextHover ? 1.08 : 1));
+            paintFrame();
           } else {
             startLoop();
           }
@@ -276,18 +284,21 @@ export function FloatingTabBar() {
           d.dragging = false;
           setDragHoverIndex(null);
           animRef.current.activeVisualIndex = selectedIndex;
-          animRef.current.dragOffset = 0;
           if (wasDragging && stepPx > 0) {
             const absoluteFloat = Math.min(FLOATING_TABS.length - 1, Math.max(0, d.startIndex + d.totalDx / stepPx));
             const targetIdx = Math.round(absoluteFloat);
+            animRef.current.motion.release(targetIdx);
             if (targetIdx !== selectedIndex) {
               animRef.current.activeVisualIndex = targetIdx;
               selectTab(targetIdx);
             } else if (!reduceMotion) {
               startLoop();
             } else {
-              paintFrame(selectedIndex * stepPx, 0, FLOATING_TABS.map((_, i) => (i === selectedIndex ? 1.08 : 1)));
+              paintFrame();
             }
+          } else {
+            animRef.current.motion.releasePress();
+            if (!reduceMotion) startLoop();
           }
         }}
         onPointerCancel={() => {
@@ -296,14 +307,15 @@ export function FloatingTabBar() {
           d.dragging = false;
           setDragHoverIndex(null);
           animRef.current.activeVisualIndex = selectedIndex;
-          animRef.current.dragOffset = 0;
+          animRef.current.motion.release(selectedIndex);
+          animRef.current.motion.releasePress();
           if (!reduceMotion) startLoop();
         }}
       >
         <div
           ref={pillRef}
           aria-hidden="true"
-          className="pointer-events-none absolute inset-y-0 rounded-full bg-(--bc-tab-pill-bg) will-change-transform"
+          className="pointer-events-none absolute inset-y-0 overflow-hidden rounded-full bg-(--bc-tab-pill-bg) will-change-transform"
           style={
             tabWidthPx > 0
               ? { left: 0, width: `${tabWidthPx}px`, transformOrigin: '50% 50%' }
@@ -313,7 +325,18 @@ export function FloatingTabBar() {
                   transformOrigin: '50% 50%',
                 }
           }
-        />
+        >
+          {/* Specular glass rim shown while lifted; sheds first on landing (`τ 0.09/0.05`). */}
+          <div
+            ref={pillRimRef}
+            className="pointer-events-none absolute inset-0 rounded-full border-[0.5px] border-white/25"
+            style={{
+              opacity: 0,
+              background:
+                'linear-gradient(135deg, rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0.06) 45%, transparent 60%)',
+            }}
+          />
+        </div>
         {FLOATING_TABS.map((tab, index) => {
           const active = index === visualIndex;
           const { Icon } = tab;
@@ -349,9 +372,7 @@ export function FloatingTabBar() {
               >
                 <Icon size={28} />
               </span>
-              <span
-                className="mt-(--bc-tab-icon-label-gap) max-w-full truncate font-(family-name:--bc-font-family) text-[10px] leading-none font-semibold tracking-(--bc-tracking-tab-label)"
-              >
+              <span className="mt-(--bc-tab-icon-label-gap) max-w-full truncate font-(family-name:--bc-font-family) text-[10px] leading-none font-semibold tracking-(--bc-tracking-tab-label)">
                 {tab.label}
               </span>
             </button>

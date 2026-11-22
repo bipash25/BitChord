@@ -71,6 +71,7 @@
   --bc-skeleton-shimmer: rgba(255, 255, 255, 0.6);
   --bc-hover-fill: rgba(0, 0, 0, 0.05);
   --bc-active-row-fill: rgba(0, 0, 0, 0.14);
+  --bc-switch-off-bg: rgba(142, 142, 147, 0.22);
 
   /* z-index layers */
   --z-default: 1;
@@ -80,7 +81,7 @@
   --z-contextual-menus: 9951;
   --z-modal: 10001;
 
-  /* Fixed menu tokens (IosMenu.kt:103-129) */
+  /* Fixed menu tokens (IosMenu.kt:103-129, :184) */
   --bc-menu-fill-dark: #1c1c1e;
   --bc-menu-rim-dark: rgba(255, 255, 255, 0.1);
   --bc-menu-label-dark: rgba(255, 255, 255, 0.75);
@@ -91,6 +92,22 @@
   --bc-menu-label-light: #1a1a1a;
   --bc-menu-label2-light: rgba(26, 26, 26, 0.55);
   --bc-menu-sep-light: rgba(0, 0, 0, 0.09);
+
+  /* Resolved theme menu, held-plate & alert tokens */
+  --bc-menu-bg: color-mix(in srgb, var(--bc-menu-fill-light) 72%, transparent);
+  --bc-menu-rim: var(--bc-menu-rim-light);
+  --bc-menu-label: var(--bc-menu-label-light);
+  --bc-menu-label2: var(--bc-menu-label2-light);
+  --bc-menu-sep: var(--bc-menu-sep-light);
+  --bc-menu-pressed: rgba(0, 0, 0, 0.07);
+  --bc-menu-scrim: rgba(0, 0, 0, 0.14);
+
+  --bc-held-plate-bg: rgba(255, 255, 255, 0.5);
+  --bc-held-plate-rim: rgba(0, 0, 0, 0.06);
+  --bc-held-scrim: rgba(0, 0, 0, 0.1);
+
+  --bc-alert-bg: color-mix(in srgb, var(--bc-surface) 78%, transparent);
+  --bc-alert-rule: color-mix(in srgb, var(--bc-on-surface) 14%, transparent);
 
   /* ---- §2.2 Glass / surface material values --------------------------- */
   --bc-glass-blur: 8px;
@@ -260,6 +277,19 @@
     --bc-skeleton-shimmer: rgba(255, 255, 255, 0.08);
     --bc-hover-fill: rgba(255, 255, 255, 0.06);
     --bc-active-row-fill: rgba(255, 255, 255, 0.14);
+    --bc-switch-off-bg: rgba(142, 142, 147, 0.36);
+
+    --bc-menu-bg: color-mix(in srgb, var(--bc-menu-fill-dark) 80%, transparent);
+    --bc-menu-rim: var(--bc-menu-rim-dark);
+    --bc-menu-label: #ffffff;
+    --bc-menu-label2: rgba(255, 255, 255, 0.7);
+    --bc-menu-sep: var(--bc-menu-sep-dark);
+    --bc-menu-pressed: rgba(255, 255, 255, 0.1);
+    --bc-menu-scrim: rgba(0, 0, 0, 0.3);
+
+    --bc-held-plate-bg: rgba(0, 0, 0, 0.5);
+    --bc-held-plate-rim: rgba(255, 255, 255, 0.1);
+    --bc-held-scrim: rgba(0, 0, 0, 0.3);
 
     --bc-glass-tint: var(--bc-glass-tint-dark);
     --bc-indicator-alpha: 0.14;
@@ -296,7 +326,8 @@
 
 /*
  * Reduced dynamic blur contract (§7.5): drop backdrop-filter and fill
- * surfaces opaque with --bc-surface while preserving the 0.5px hairline.
+ * surfaces opaque with --bc-surface (and opaque menu/plate slabs) while
+ * preserving the 0.5px hairline.
  */
 @media (prefers-reduced-transparency: reduce) {
   :root {
@@ -305,6 +336,17 @@
     --bc-frost-backdrop: none;
     --bc-glass-backdrop: none;
     --bc-top-fade-backdrop: none;
+    --bc-menu-bg: var(--bc-menu-fill-light);
+    --bc-held-plate-bg: rgba(255, 255, 255, 0.85);
+    --bc-held-scrim: rgba(0, 0, 0, 0.36);
+    --bc-alert-bg: var(--bc-surface);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bc-menu-bg: var(--bc-menu-fill-dark);
+      --bc-held-plate-bg: rgba(0, 0, 0, 0.85);
+      --bc-held-scrim: rgba(0, 0, 0, 0.62);
+    }
   }
   [data-tint] {
     --bc-glass-tint: var(--bc-page-elevated);
@@ -317,6 +359,18 @@
   --bc-frost-backdrop: none;
   --bc-glass-backdrop: none;
   --bc-top-fade-backdrop: none;
+  --bc-menu-bg: var(--bc-menu-fill-light);
+  --bc-held-plate-bg: rgba(255, 255, 255, 0.85);
+  --bc-held-scrim: rgba(0, 0, 0, 0.36);
+  --bc-alert-bg: var(--bc-surface);
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-reduced-blur='true'] {
+    --bc-menu-bg: var(--bc-menu-fill-dark);
+    --bc-held-plate-bg: rgba(0, 0, 0, 0.85);
+    --bc-held-scrim: rgba(0, 0, 0, 0.62);
+  }
 }
 
 [data-reduced-blur='true'] [data-tint] {

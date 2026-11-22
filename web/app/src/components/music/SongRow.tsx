@@ -1,5 +1,6 @@
 import { AudioLines, ListPlus, Play } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { HELD_LONG_PRESS_MS, HELD_MOVE_TOLERANCE_PX, HeldContextMenu, type HeldBounds } from '@/components/HeldContextMenu';
 import { PrefetchLink } from '@/components/PrefetchLink';
 import type { ArtistRef, Track } from '@/data/music/types';
 import { usePlayer } from '@/state/player';
@@ -7,7 +8,7 @@ import { Artwork } from './Artwork';
 import { ExplicitBadge } from './ExplicitBadge';
 import { artistHref, formatDuration } from './links';
 import { PlayingBars } from './PlayingBars';
-import { TrackMenu } from './TrackMenu';
+import { TrackMenu, TrackMenuItems } from './TrackMenu';
 
 export const SWIPE_COMMIT_FRACTION = 0.45;
 export const SWIPE_HYSTERESIS_FACTOR = 0.8;
@@ -97,6 +98,22 @@ export function SongRow({
 
   // Horizontal swipe-to-queue (Common.kt:369-479, spec §4.9): commits at 45% of row width.
   const rowRef = useRef<HTMLDivElement>(null);
+  const longPressRef = useRef<{ timer: number | null; startX: number; startY: number }>({
+    timer: null,
+    startX: 0,
+    startY: 0,
+  });
+  const [held, setHeld] = useState<{ open: boolean; bounds: HeldBounds } | null>(null);
+
+  const cancelLongPress = useCallback(() => {
+    if (longPressRef.current.timer !== null) {
+      window.clearTimeout(longPressRef.current.timer);
+      longPressRef.current.timer = null;
+    }
+  }, []);
+
+  useEffect(() => cancelLongPress, [cancelLongPress]);
+
   const swipeRef = useRef({
     active: false,
     locked: false,
@@ -114,8 +131,45 @@ export function SongRow({
     ? undefined
     : (onSwipeToQueue ?? (() => addToQueue([resolvedTrack])));
 
+  const openHeldMenu = useCallback(() => {
+    const rect = rowRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    swipeRef.current.active = false;
+    swipeRef.current.locked = false;
+    swipeRef.current.suppressClick = true;
+    setSwipeX(0);
+    setArmedNudge(false);
+    setHeld({
+      open: true,
+      bounds: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+    });
+  }, []);
+
+  const dismissHeldMenu = useCallback(() => {
+    setHeld((prev) => (prev ? { ...prev, open: false } : null));
+  }, []);
+
+  const clearHeldMenu = useCallback(() => {
+    setHeld(null);
+    setTimeout(() => {
+      swipeRef.current.suppressClick = false;
+    }, 60);
+  }, []);
+
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!queueHandler || e.pointerType === 'mouse' || e.button !== 0) return;
+    if (e.button !== 0 || unavailable) return;
+    const target = e.target as HTMLElement | null;
+    if (!target?.closest('button, a')) {
+      cancelLongPress();
+      longPressRef.current.startX = e.clientX;
+      longPressRef.current.startY = e.clientY;
+      longPressRef.current.timer = window.setTimeout(() => {
+        longPressRef.current.timer = null;
+        openHeldMenu();
+      }, HELD_LONG_PRESS_MS);
+    }
+
+    if (!queueHandler || e.pointerType === 'mouse') return;
     swipeRef.current = {
       active: true,
       locked: false,
@@ -129,6 +183,10 @@ export function SongRow({
   };
 
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (longPressRef.current.timer !== null) {
+      const moveDist = Math.hypot(e.clientX - longPressRef.current.startX, e.clientY - longPressRef.current.startY);
+      if (moveDist > HELD_MOVE_TOLERANCE_PX) cancelLongPress();
+    }
     const s = swipeRef.current;
     if (!s.active || e.pointerId !== s.pointerId) return;
     const dx = e.clientX - s.startX;
@@ -141,6 +199,7 @@ export function SongRow({
       }
       s.locked = true;
       s.suppressClick = true;
+      cancelLongPress();
       e.currentTarget.setPointerCapture(e.pointerId);
     }
     const width = rowRef.current?.clientWidth || 360;
@@ -159,6 +218,7 @@ export function SongRow({
   };
 
   const finishSwipe = (e: React.PointerEvent<HTMLDivElement>) => {
+    cancelLongPress();
     const s = swipeRef.current;
     if (!s.active || e.pointerId !== s.pointerId) return;
     const width = rowRef.current?.clientWidth || 360;
@@ -184,6 +244,86 @@ export function SongRow({
     : 'text-(--bc-page-on,var(--bc-on-surface))';
   const secondaryColor = 'text-(--bc-page-on-variant,var(--bc-on-surface-variant))';
   const accentColor = 'text-(--bc-page-accent,var(--bc-primary))';
+
+  const renderRowBody = (includeMenu: boolean) => (
+    <>
+      {trackNumber !== null ? (
+        <div className="mr-(--bc-page-gutter) grid h-[52px] w-(--bc-track-number-w) shrink-0 place-items-center">
+          {searchPlayingStyle && isCurrent && isPlaying ? (
+            <PlayingBars />
+          ) : isCurrent ? (
+            isPlaying ? (
+              <AudioLines size={20} className={accentColor} aria-label="Now playing" />
+            ) : (
+              <Play size={18} className={accentColor} fill="currentColor" aria-label="Now playing" />
+            )
+          ) : (
+            <span className={`bc-type-body-lg tabular-nums ${secondaryColor}`}>{trackNumber}</span>
+          )}
+        </div>
+      ) : (
+        <div
+          className={`relative mr-3.5 h-[52px] shrink-0 overflow-hidden rounded-(--bc-radius-art) bg-(--bc-page-elevated,var(--bc-surface-variant)) ${
+            isVideo ? 'w-[92px]' : 'w-[52px]'
+          }`}
+        >
+          <Artwork
+            src={track.thumbnail ?? fallbackArtwork ?? null}
+            displayWidth={isVideo ? 92 : 52}
+            aspect={isVideo ? 16 / 9 : 1}
+            radius="var(--bc-radius-art)"
+          />
+          {searchPlayingStyle && isCurrent && isPlaying && (
+            <PlayingBars className="absolute inset-0 m-auto" />
+          )}
+        </div>
+      )}
+
+      <div
+        className={`min-w-0 flex-1 flex-col flex ${
+          unavailable === 'matching' ? 'animate-matching motion-reduce:animate-none' : ''
+        }`}
+      >
+        <div className="flex min-w-0 items-center">
+          <span className={`truncate bc-type-title-md ${titleColor}`}>{track.title}</span>
+          {track.explicit && <ExplicitBadge />}
+        </div>
+        {(subtitle || effectiveArtists.length > 0) && (
+          <div className={`mt-0.5 truncate bc-type-body ${secondaryColor}`}>
+            {subtitle ?? <ArtistsLine artists={effectiveArtists} />}
+          </div>
+        )}
+      </div>
+
+      {isCurrent && trackNumber === null && !searchPlayingStyle && (
+        <span className={`ml-2 shrink-0 ${accentColor}`} aria-label="Now playing">
+          {isPlaying ? <AudioLines size={18} /> : <Play size={16} fill="currentColor" />}
+        </span>
+      )}
+
+      {unavailable === 'matching' ? (
+        <span
+          className={`ml-2 size-4 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent ${secondaryColor}`}
+          aria-label="Matching"
+        />
+      ) : (
+        (unavailable === 'missing' || track.durationSec !== null) && (
+          <span className={`ml-2 shrink-0 bc-type-label tabular-nums ${secondaryColor}`}>
+            {unavailable === 'missing' ? 'Not found' : formatDuration(track.durationSec)}
+          </span>
+        )
+      )}
+
+      {includeMenu && trailing && !unavailable && <span className="ml-1 shrink-0">{trailing}</span>}
+
+      {includeMenu && !unavailable && (
+        <TrackMenu
+          track={resolvedTrack}
+          className={`-mr-3.5 ml-0.5 grid size-9 shrink-0 place-items-center rounded-full ${secondaryColor} hover:bg-(--bc-hover-fill)`}
+        />
+      )}
+    </>
+  );
 
   return (
     <div ref={rowRef} className="relative overflow-hidden">
@@ -225,6 +365,12 @@ export function SongRow({
             handleRowClick();
           }
         }}
+        onContextMenu={(e) => {
+          if (unavailable) return;
+          e.preventDefault();
+          cancelLongPress();
+          openHeldMenu();
+        }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={finishSwipe}
@@ -244,82 +390,24 @@ export function SongRow({
           .filter(Boolean)
           .join(' ')}
       >
-        {trackNumber !== null ? (
-          <div className="mr-(--bc-page-gutter) grid h-[52px] w-(--bc-track-number-w) shrink-0 place-items-center">
-            {searchPlayingStyle && isCurrent && isPlaying ? (
-              <PlayingBars />
-            ) : isCurrent ? (
-              isPlaying ? (
-                <AudioLines size={20} className={accentColor} aria-label="Now playing" />
-              ) : (
-                <Play size={18} className={accentColor} fill="currentColor" aria-label="Now playing" />
-              )
-            ) : (
-              <span className={`bc-type-body-lg tabular-nums ${secondaryColor}`}>{trackNumber}</span>
-            )}
-          </div>
-        ) : (
-          <div
-            className={`relative mr-3.5 h-[52px] shrink-0 overflow-hidden rounded-(--bc-radius-art) bg-(--bc-page-elevated,var(--bc-surface-variant)) ${
-              isVideo ? 'w-[92px]' : 'w-[52px]'
-            }`}
-          >
-            <Artwork
-              src={track.thumbnail ?? fallbackArtwork ?? null}
-              displayWidth={isVideo ? 92 : 52}
-              aspect={isVideo ? 16 / 9 : 1}
-              radius="var(--bc-radius-art)"
-            />
-            {searchPlayingStyle && isCurrent && isPlaying && (
-              <PlayingBars className="absolute inset-0 m-auto" />
-            )}
-          </div>
-        )}
-
-        <div
-          className={`min-w-0 flex-1 flex-col flex ${
-            unavailable === 'matching' ? 'animate-matching motion-reduce:animate-none' : ''
-          }`}
-        >
-          <div className="flex min-w-0 items-center">
-            <span className={`truncate bc-type-title-md ${titleColor}`}>{track.title}</span>
-            {track.explicit && <ExplicitBadge />}
-          </div>
-          {(subtitle || effectiveArtists.length > 0) && (
-            <div className={`mt-0.5 truncate bc-type-body ${secondaryColor}`}>
-              {subtitle ?? <ArtistsLine artists={effectiveArtists} />}
-            </div>
-          )}
-        </div>
-
-        {isCurrent && trackNumber === null && !searchPlayingStyle && (
-          <span className={`ml-2 shrink-0 ${accentColor}`} aria-label="Now playing">
-            {isPlaying ? <AudioLines size={18} /> : <Play size={16} fill="currentColor" />}
-          </span>
-        )}
-
-        {unavailable === 'matching' ? (
-          <span
-            className={`ml-2 size-4 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent ${secondaryColor}`}
-            aria-label="Matching"
-          />
-        ) : (
-          (unavailable === 'missing' || track.durationSec !== null) && (
-            <span className={`ml-2 shrink-0 bc-type-label tabular-nums ${secondaryColor}`}>
-              {unavailable === 'missing' ? 'Not found' : formatDuration(track.durationSec)}
-            </span>
-          )
-        )}
-
-        {trailing && !unavailable && <span className="ml-1 shrink-0">{trailing}</span>}
-
-        {!unavailable && (
-          <TrackMenu
-            track={resolvedTrack}
-            className={`-mr-3.5 ml-0.5 grid size-9 shrink-0 place-items-center rounded-full ${secondaryColor} hover:bg-(--bc-hover-fill)`}
-          />
-        )}
+        {renderRowBody(true)}
       </div>
+
+      {held && (
+        <HeldContextMenu
+          open={held.open}
+          bounds={held.bounds}
+          onDismiss={dismissHeldMenu}
+          onExited={clearHeldMenu}
+          label={`Actions for ${track.title}`}
+          preview={
+            <div className="flex size-full items-center px-(--bc-page-gutter) py-1 text-start select-none">
+              {renderRowBody(false)}
+            </div>
+          }
+          actions={<TrackMenuItems track={resolvedTrack} onClose={dismissHeldMenu} />}
+        />
+      )}
     </div>
   );
 }

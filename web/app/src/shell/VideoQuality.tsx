@@ -31,7 +31,7 @@ export function VideoQuality({ className = '' }: { className?: string }) {
   return (
     <>
       <button
-        className={`grid h-7 min-w-11 place-items-center overflow-hidden rounded-[8px] bg-white/10 px-2 [backdrop-filter:saturate(1.8)_blur(18px)] [interpolate-size:allow-keywords] [transition:width_0.3s_ease,background-color_0.1s_ease-in,opacity_0.3s_ease] hover:bg-white/20 ${className}`}
+        className={`grid h-7 min-w-11 place-items-center overflow-hidden rounded-[8px] bg-white/10 px-2 [backdrop-filter:var(--bc-frost-backdrop)] [interpolate-size:allow-keywords] [transition:width_0.3s_ease,background-color_0.1s_ease-in,opacity_0.3s_ease] hover:bg-white/20 [[data-reduced-blur='true']_&]:bg-[#1c1c1e] [@media(prefers-reduced-transparency:reduce)]:bg-[#1c1c1e] ${className}`}
         aria-haspopup="menu"
         aria-label={`Video quality: ${quality === 'auto' ? `Auto (${label})` : label}`}
         onClick={(event) => setAnchor(event.currentTarget)}
@@ -39,7 +39,7 @@ export function VideoQuality({ className = '' }: { className?: string }) {
         {/* Keyed on the reading, so each new one melts in over the last. */}
         <span
           key={label}
-          className="animate-morph type-[700_11px/14px] tracking-[0.04em] text-white/70 tabular-nums mix-blend-plus-lighter motion-reduce:animate-none"
+          className="animate-morph bc-type-label-sm font-bold tracking-[0.04em] text-white/70 tabular-nums mix-blend-plus-lighter motion-reduce:animate-none"
         >
           {label}
         </span>

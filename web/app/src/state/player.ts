@@ -23,6 +23,7 @@ import {
 import { trackLog } from '@/playback/trackLog';
 import type { LoadedTrack, StreamStats, YouTubeEngine } from '@/playback/youtube/engine';
 import type { AutomixGraph, AutoDJSnapshot } from '@/playback/automix';
+import { showToast } from './toast';
 
 export interface NowPlaying {
   videoId: string;
@@ -486,12 +487,16 @@ export const usePlayer = create<PlayerState>()((set, get) => ({
   },
 
   playNext(tracks, source = null) {
+    if (!tracks.length) return;
     insertUser(tracks, source, true);
+    showToast(tracks.length === 1 ? 'Playing next' : `Playing ${tracks.length} songs next`);
     intent();
   },
 
   addToQueue(tracks, source = null) {
+    if (!tracks.length) return;
     insertUser(tracks, source, false);
+    showToast(tracks.length === 1 ? 'Added to queue' : `Added ${tracks.length} songs to queue`);
     intent();
   },
 
@@ -509,6 +514,7 @@ export const usePlayer = create<PlayerState>()((set, get) => ({
     const { queue, index } = get();
     if (at === index || at < 0 || at >= queue.length) return;
     set({ queue: queue.filter((_, i) => i !== at), index: at < index ? index - 1 : index });
+    showToast('Removed from queue');
     void refillAutoplay();
     intent();
   },
@@ -527,6 +533,7 @@ export const usePlayer = create<PlayerState>()((set, get) => ({
     const { queue, index } = get();
     const drop = new Set(upcomingUserQueueIndices(queue.map((e) => e.tier), index));
     set({ queue: queue.filter((_, i) => !drop.has(i)) });
+    if (drop.size > 0) showToast('Cleared Up Next');
     intent();
   },
 

@@ -1,7 +1,7 @@
 import { X } from 'lucide-react';
-import { useEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useState } from 'react';
 import { BridgeCallError, type YtAuthState } from '@bitchord/shared/bridge';
+import { IosAlert } from '@/components/IosAlert';
 import { queryClient } from '@/lib/queryClient';
 import { adoptYtAuth, useYtAuth, ytAuthQueryKey } from '@/extension/useYtAuth';
 import { JAR_MAX_CHARS, clearUserJar, setUserJar, verifyUserJar } from '@/extension/userJar';
@@ -89,12 +89,6 @@ function SignInDialog({ auth, onClose }: { auth: YtAuthState; onClose: () => voi
   const [step, setStep] = useState<Step>(connected ? { kind: 'connected', state: connected } : { kind: 'intro' });
   const [text, setText] = useState('');
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
   /** Disconnect: the stored session is dropped and the anonymous one takes over. */
   const disconnect = () => {
     clearUserJar();
@@ -151,17 +145,9 @@ function SignInDialog({ auth, onClose }: { auth: YtAuthState; onClose: () => voi
     setStep({ kind: 'connected', state });
   };
 
-  return createPortal(
-    <div
-      className="fixed inset-0 z-(--z-modal) grid animate-fade place-items-center bg-(--bc-scrim)"
-      onPointerDown={(e) => e.target === e.currentTarget && onClose()}
-    >
-      <div
-        className="flex max-h-[min(560px,calc(100vh-32px))] w-[min(400px,calc(100vw-32px))] animate-zoom flex-col overflow-y-auto rounded-(--bc-radius-alert) bg-(--bc-surface) shadow-(--bc-shadow-menu)"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Sign in with YouTube"
-      >
+  return (
+    <IosAlert onClose={onClose} label="Sign in with YouTube" size="dialog">
+      <div className="flex flex-col overflow-y-auto">
         <header className="flex items-center justify-between px-5 pt-[18px] pb-1">
           <h2 className="bc-type-title text-(--bc-on-surface)">
             {step.kind === 'connected' ? 'YouTube Music' : step.kind === 'failed' ? 'Couldn’t connect' : 'Sign in with YouTube'}
@@ -282,8 +268,7 @@ function SignInDialog({ auth, onClose }: { auth: YtAuthState; onClose: () => voi
           </section>
         )}
       </div>
-    </div>,
-    document.body,
+    </IosAlert>
   );
 }
 

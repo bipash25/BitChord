@@ -31,10 +31,5 @@ export const settingsUi = {
   linkRow: 'w-full cursor-pointer text-start hover:bg-(--bc-hover-fill)',
   inlineButton:
     'ml-2 rounded-full bg-(--bc-tab-pill-bg) px-3 py-1 bc-type-label text-(--bc-on-surface) hover:opacity-85 disabled:opacity-45',
-
-  switch: [
-    'relative h-7 w-12 flex-none cursor-pointer appearance-none rounded-full bg-(--bc-on-surface-variant)/30 transition-[background-color] duration-200 checked:bg-(--bc-green)',
-    'after:absolute after:top-0.5 after:left-0.5 after:size-6 after:rounded-full after:bg-white after:shadow-(--bc-shadow-thumb-switch) after:transition-[translate] after:duration-200 checked:after:translate-x-5',
-  ].join(' '),
   input: field,
 };

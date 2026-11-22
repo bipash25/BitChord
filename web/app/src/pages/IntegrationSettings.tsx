@@ -1,3 +1,4 @@
+import { IosSwitch } from '@/components/IosSwitch';
 import { APPLE_ORIGINS, useAppleAccess } from '@/data/apple/artistArt';
 import { useAppleSettings } from '@/data/apple/motionArt';
 import { useHostAccess } from '@/extension/useHostAccess';
@@ -93,7 +94,7 @@ export function Toggle({ label, detail, checked, onChange }: { label: string; de
         <span>{label}</span>
         {detail && <span className={settingsUi.rowDetail}>{detail}</span>}
       </span>
-      <input type="checkbox" className={settingsUi.switch} checked={checked} onChange={(e) => onChange(e.currentTarget.checked)} />
+      <IosSwitch checked={checked} onCheckedChange={onChange} />
     </label>
   );
 }

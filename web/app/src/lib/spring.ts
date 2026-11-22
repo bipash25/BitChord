@@ -41,6 +41,30 @@ export const MINI_PLAYER_SETTLE_SPRING: SpringSpec = {
   damping: dampingFromRatio(400, 0.65),
 };
 
+/** iOS 26 switch thumb travel spring (IosSwitch.kt:75 — ζ 0.78, stiffness 700). */
+export const IOS_SWITCH_THUMB_SPRING: SpringSpec = {
+  stiffness: 700,
+  damping: dampingFromRatio(700, 0.78),
+};
+
+/** iOS 26 switch press stretch spring (IosSwitch.kt:80 — ζ 0.7, stiffness 900). */
+export const IOS_SWITCH_STRETCH_SPRING: SpringSpec = {
+  stiffness: 900,
+  damping: dampingFromRatio(900, 0.7),
+};
+
+/** iOS menu popover open spring (IosMenu.kt:482 — critically damped, stiffness 600). */
+export const IOS_MENU_OPEN_SPRING: SpringSpec = {
+  stiffness: 600,
+  damping: dampingFromRatio(600, 1),
+};
+
+/** Held context menu lift spring (HeldContextMenu.kt:121 — ζ 0.72, stiffness 420). */
+export const HELD_MENU_LIFT_SPRING: SpringSpec = {
+  stiffness: 420,
+  damping: dampingFromRatio(420, 0.72),
+};
+
 const SUBSTEP = 1 / 240;
 
 export function springStep(

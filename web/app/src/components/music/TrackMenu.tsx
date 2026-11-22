@@ -1,6 +1,16 @@
-import { ChevronLeft, ChevronRight, ListEnd, ListPlus, ListStart, MoreVertical, Star } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Disc3, ListEnd, ListPlus, ListStart, MoreVertical, Star, User } from 'lucide-react';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { Menu, MenuHeader, MenuItem, MenuSeparator, type MenuPlacement } from '@/components/Menu';
+import { useNavigate } from 'react-router';
+import {
+  Menu,
+  MenuHeader,
+  MenuItem,
+  MenuQuickAction,
+  MenuQuickActions,
+  MenuSeparator,
+  type MenuPlacement,
+} from '@/components/Menu';
+import { albumHref, artistHref } from '@/components/music/links';
 import {
   useAddToPlaylist,
   useLikeStatus,
@@ -10,13 +20,14 @@ import {
 } from '@/data/music/queries';
 import type { Track } from '@/data/music/types';
 import { usePlayer } from '@/state/player';
+import { showToast } from '@/state/toast';
 
 function PlaylistChoices({ videoId, onDone, onBack }: { videoId: string; onDone: () => void; onBack: () => void }) {
   const options = usePlaylistOptions(videoId, true);
   const add = useAddToPlaylist();
   return (
     <>
-      <MenuItem icon={<ChevronLeft size={14} />} onSelect={onBack}>
+      <MenuItem icon={<ChevronLeft size={18} />} onSelect={onBack}>
         Back
       </MenuItem>
       <MenuSeparator />
@@ -40,7 +51,10 @@ function PlaylistChoices({ videoId, onDone, onBack }: { videoId: string; onDone:
         <MenuItem
           key={option.playlistId}
           onSelect={() => {
-            add.mutate({ playlistId: option.playlistId, videoId });
+            add.mutate(
+              { playlistId: option.playlistId, videoId },
+              { onSuccess: () => showToast(`Added to ${option.title}`) },
+            );
             onDone();
           }}
         >
@@ -51,54 +65,107 @@ function PlaylistChoices({ videoId, onDone, onBack }: { videoId: string; onDone:
   );
 }
 
-/** Favorite and Add to Playlist: the account's actions, signed in only. */
-function AccountItems({ track, onClose, onPlaylists }: { track: Track; onClose: () => void; onPlaylists: () => void }) {
+function FavoriteQuickAction({ track, onDone }: { track: Track; onDone: () => void }) {
   const status = useLikeStatus(track.videoId);
   const setLiked = useSetLiked();
   const liked = status.data === 'LIKE';
   return (
-    <>
-      <MenuSeparator />
-      <MenuItem
-        icon={<Star size={15} fill={liked ? 'currentColor' : 'none'} />}
-        disabled={status.isPending}
-        onSelect={() => {
-          setLiked.mutate({ videoId: track.videoId, liked: !liked });
-          onClose();
-        }}
-      >
-        {liked ? 'Unfavorite' : 'Favorite'}
-      </MenuItem>
-      <MenuItem icon={<ListPlus size={15} />} trailing={<ChevronRight size={14} />} onSelect={onPlaylists}>
-        Add to Playlist
-      </MenuItem>
-    </>
+    <MenuQuickAction
+      icon={<Star size={22} fill={liked ? 'currentColor' : 'none'} />}
+      label={liked ? 'Favorited' : 'Favorite'}
+      tint={liked ? 'var(--bc-accent-red)' : undefined}
+      disabled={status.isPending}
+      onSelect={() => {
+        setLiked.mutate({ videoId: track.videoId, liked: !liked });
+        showToast(liked ? 'Removed from favorites' : 'Added to favorites');
+        onDone();
+      }}
+    />
   );
 }
 
-function TrackMenuItems({ track, onClose }: { track: Track; onClose: () => void }) {
+/**
+ * Shared track menu body (`SongActionsMenu.kt`, spec §3.7): quick-action tiles
+ * across the top (`Play Next`, `Add to Queue`, and `Favorite` when signed in),
+ * followed by `Add to Playlist` and `Go to Album` / `Go to Artist` rows.
+ */
+export function TrackMenuItems({ track, onClose }: { track: Track; onClose: () => void }) {
   const [view, setView] = useState<'main' | 'playlists'>('main');
   const signedIn = useSignedIn();
+  const navigate = useNavigate();
+
   if (view === 'playlists') {
     return <PlaylistChoices videoId={track.videoId} onDone={onClose} onBack={() => setView('main')} />;
   }
+
   const { playNext, addToQueue } = usePlayer.getState();
+  const toAlbum = albumHref(track.album?.id ?? null);
+  const firstArtist = track.artists.find((a) => Boolean(a.id));
+  const toArtist = artistHref(firstArtist?.id ?? null);
+  const hasSecondaryRows = signedIn || Boolean(toAlbum) || Boolean(toArtist);
+
   return (
     <>
-      <MenuItem icon={<ListStart size={15} />} onSelect={() => (onClose(), playNext([track]))}>
-        Play Next
-      </MenuItem>
-      <MenuItem icon={<ListEnd size={15} />} onSelect={() => (onClose(), addToQueue([track]))}>
-        Add to Queue
-      </MenuItem>
-      {signedIn && <AccountItems track={track} onClose={onClose} onPlaylists={() => setView('playlists')} />}
+      <MenuQuickActions>
+        <MenuQuickAction
+          icon={<ListStart size={22} />}
+          label="Play Next"
+          onSelect={() => {
+            onClose();
+            playNext([track]);
+          }}
+        />
+        <MenuQuickAction
+          icon={<ListEnd size={22} />}
+          label="Queue"
+          onSelect={() => {
+            onClose();
+            addToQueue([track]);
+          }}
+        />
+        {signedIn && <FavoriteQuickAction track={track} onDone={onClose} />}
+      </MenuQuickActions>
+
+      {hasSecondaryRows && <MenuSeparator />}
+
+      {signedIn && (
+        <MenuItem
+          icon={<ListPlus size={20} />}
+          trailing={<ChevronRight size={16} />}
+          onSelect={() => setView('playlists')}
+        >
+          Add to Playlist
+        </MenuItem>
+      )}
+      {toAlbum && (
+        <MenuItem
+          icon={<Disc3 size={20} />}
+          onSelect={() => {
+            onClose();
+            navigate(toAlbum);
+          }}
+        >
+          Go to Album
+        </MenuItem>
+      )}
+      {toArtist && (
+        <MenuItem
+          icon={<User size={20} />}
+          onSelect={() => {
+            onClose();
+            navigate(toArtist);
+          }}
+        >
+          Go to Artist
+        </MenuItem>
+      )}
     </>
   );
 }
 
 /**
- * The ⋯ button at the end of a track row (report §14): Play Next and Add to
- * Queue for everyone; Favorite and Add to Playlist signed in.
+ * The ⋮ button at the end of a track row (`SongActionsMenu.kt`, spec §3.7, §6.21):
+ * Play Next and Add to Queue for everyone; Favorite and Add to Playlist signed in.
  */
 export function TrackMenu({
   track,

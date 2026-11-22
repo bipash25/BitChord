@@ -14,6 +14,7 @@ import {
   UpNextIcon,
 } from '@/components/icons/Transport';
 import { ExplicitBadge } from '@/components/music/ExplicitBadge';
+import { MARQUEE_ARTIST_STAGGER_MS, Marquee } from '@/components/Marquee';
 import { FavoriteButton } from '@/components/music/FavoriteButton';
 import { MotionArtwork } from '@/components/music/MotionArtwork';
 import { TrackMenu } from '@/components/music/TrackMenu';
@@ -232,6 +233,7 @@ export function FullScreenPlayer() {
   const [volumeOpen, setVolumeOpen] = useState(false);
   const [scrubbing, setScrubbing] = useState(false);
   const [seamY, setSeamY] = useState(0);
+  const [titleOverflows, setTitleOverflows] = useState(false);
 
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -467,19 +469,27 @@ export function FullScreenPlayer() {
     <div className="flex items-center gap-3">
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div className="flex min-w-0 items-center gap-1.5">
-          <PageLink
-            className={`min-w-0 max-w-full self-start truncate font-(family-name:--bc-font-family) font-bold text-white ${
+          <Marquee
+            measureKey={`${title}-${compact ? 'c' : 'f'}`}
+            onOverflowChange={setTitleOverflows}
+            className={`font-(family-name:--bc-font-family) font-bold text-white ${
               compact ? 'text-[17px] leading-[1.25]' : 'text-[22px] leading-[1.2] tracking-(--bc-tracking-headline)'
-            } ${linkClass}`}
-            href={albumHref(album?.id ?? null)}
-            resolve={() => albumPageFor(videoId, album, [title, artist].filter(Boolean).join(' '))}
+            }`}
           >
-            {title}
-          </PageLink>
+            <PageLink
+              className={linkClass}
+              href={albumHref(album?.id ?? null)}
+              resolve={() => albumPageFor(videoId, album, [title, artist].filter(Boolean).join(' '))}
+            >
+              {title}
+            </PageLink>
+          </Marquee>
           {track?.explicit && <ExplicitBadge size={14} />}
         </div>
-        <span
-          className={`truncate font-(family-name:--bc-font-family) text-white/72 ${
+        <Marquee
+          measureKey={`${artist}-${album?.name ?? ''}-${compact ? 'c' : 'f'}`}
+          startDelayMs={titleOverflows ? MARQUEE_ARTIST_STAGGER_MS : 0}
+          className={`font-(family-name:--bc-font-family) text-white/72 ${
             compact ? 'text-[14px] leading-[1.3]' : 'text-[16px] leading-[1.35] tracking-(--bc-tracking-body-lg)'
           }`}
         >
@@ -494,7 +504,7 @@ export function FullScreenPlayer() {
               {album.name}
             </PageLink>
           )}
-        </span>
+        </Marquee>
         {!compact && <NerdStats />}
       </div>
       <FavoriteButton videoId={nowPlaying.videoId} className={chromeDiscButton} size={18} />

@@ -32,6 +32,22 @@ export function useReducedTransparency(): boolean {
   );
 }
 
+/**
+ * Low-core heuristic matching spec §7.5c: live backdrop-filter across 3 stacked
+ * surfaces is expensive on ≤4-core devices, so drop dynamic blur cleanly.
+ */
+export function isLowCoreDevice(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const cores = navigator.hardwareConcurrency;
+  return typeof cores === 'number' && cores > 0 && cores <= 4;
+}
+
+/** True when reduced-transparency or the low-core heuristic calls for opaque surfaces. */
+export function useReducedBlur(): boolean {
+  const reducedTransparency = useReducedTransparency();
+  return reducedTransparency || isLowCoreDevice();
+}
+
 /** Save-Data, or a cellular link where the browser says so (Network Information API, Chromium only). */
 export function metered(): boolean {
   const connection = (navigator as Navigator & { connection?: { saveData?: boolean; type?: string } }).connection;

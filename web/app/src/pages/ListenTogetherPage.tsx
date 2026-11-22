@@ -3,7 +3,9 @@ import { Check, Copy, Crown, LogOut, UserMinus } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { PageHeader } from '@/components/PageHeader';
+import { QrCode } from '@/components/QrCode';
 import { useSignedIn } from '@/data/music/queries';
+import { showToast } from '@/state/toast';
 import { cleanCode, inviteUrl } from '@/party/invite';
 import {
   controlsLocked,
@@ -156,8 +158,10 @@ function InviteCard({ code, server, signedIn }: { code: string; server: string |
   const preview = useQuery({ queryKey: ['party', 'preview', code, server], queryFn: () => previewParty(code, server), retry: false });
   const join = useMutation({ mutationFn: () => joinParty(code, server) });
   const data = preview.data;
+  const link = inviteUrl(code, server);
   return (
     <div className={invite}>
+      <QrCode content={link} size={140} label={`QR code for party ${code}`} />
       <p className={inviteCode}>{code}</p>
       {preview.isPending && <p className={settingsUi.footer}>Looking up the party…</p>}
       {preview.isError && <p className={error}>{messageOf(preview.error)}</p>}
@@ -220,17 +224,28 @@ function InParty() {
 
   return (
     <>
-      <div className={invite}>
-        <p className={inviteCode}>{state.code}</p>
-        <p className={settingsUi.footer}>{status}</p>
-        <button
-          className="inline-flex items-center gap-1.5 rounded-full bg-(--bc-tab-pill-bg) px-3.5 py-1.5 bc-type-label text-(--bc-on-surface) hover:opacity-85"
-          onClick={() => void navigator.clipboard.writeText(link).then(() => setCopied(true))}
-          title={link}
-        >
-          {copied ? <Check size={15} /> : <Copy size={15} />}
-          {copied ? 'Copied' : 'Copy Invite Link'}
-        </button>
+      <div className="flex flex-col items-center gap-4 rounded-(--bc-radius-group) bg-(--bc-surface-variant) p-5 sm:flex-row sm:items-center sm:justify-between sm:text-start">
+        <div className="flex min-w-0 flex-1 flex-col items-center text-center sm:items-start sm:text-start">
+          <p className="bc-type-body text-(--bc-on-surface-variant)">
+            Scan the QR code or share the party code to listen together.
+          </p>
+          <p className={`mt-2 ${inviteCode}`}>{state.code}</p>
+          <p className="mt-1 bc-type-body text-(--bc-on-surface-variant)">{status}</p>
+          <button
+            className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-(--bc-tab-pill-bg) px-3.5 py-1.5 bc-type-label text-(--bc-on-surface) hover:opacity-85"
+            onClick={() =>
+              void navigator.clipboard.writeText(link).then(() => {
+                setCopied(true);
+                showToast('Invite link copied');
+              })
+            }
+            title={link}
+          >
+            {copied ? <Check size={15} /> : <Copy size={15} />}
+            {copied ? 'Copied' : 'Copy Invite Link'}
+          </button>
+        </div>
+        <QrCode content={link} size={140} label={`QR invite for party ${state.code}`} />
       </div>
 
       <h2 className={settingsUi.sectionHeader}>
