@@ -153,6 +153,16 @@ describe('sanitiseHeaders', () => {
     expect(sanitiseHeaders({ authorization: 'Bearer x' })).toEqual({});
   });
 
+  it('forwards the visitor id only for the stats pings, whose protocol it belongs to', () => {
+    // The playback-stats family: the page's session-bound visitor id rides
+    // the ping, matched to the account that played.
+    expect(sanitiseHeaders({ 'x-goog-visitor-id': 'v' }, { forwardVisitorId: true })).toEqual({
+      'x-goog-visitor-id': 'v',
+    });
+    // Every other family still drops it with the rest of the identity headers.
+    expect(sanitiseHeaders({ 'x-goog-visitor-id': 'v' })).toEqual({});
+  });
+
   it('lowercases what it keeps', () => {
     expect(sanitiseHeaders({ 'X-Youtube-Client-Name': '1' })).toEqual({ 'x-youtube-client-name': '1' });
   });

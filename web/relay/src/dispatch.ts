@@ -16,6 +16,7 @@ import type { FallbackCredential } from './fallback.js';
 import { MAX_RESPONSE_BYTES, UPSTREAM_TIMEOUT_MS } from './limits.js';
 import { CHROMIUM_USER_AGENT, isAddonUrl, isInnerTubeUrl, isLyricOrigin, isStatsUrl, LYRIC_ORIGINS, sanitiseHeaders, ytImpersonationFor } from './hosts.js';
 import { serialise, toBytes } from './serialise.js';
+import { readUserIdentity, UserCredential } from './userjar.js';
 import { VERSION } from './version.js';
 
 /**
@@ -23,13 +24,20 @@ import { VERSION } from './version.js';
  * with a `failure()` mapping errors onto the bridge's error codes — answering
  * the subset relay.md's table lists. Identity-holding methods beyond
  * `yt.authState` (channel switching, connect) stay unsupported: the relay
- * holds exactly one session and no page ever chooses it. When the operator
- * has loaded a fallback credential (`web/docs/private-deployment.md`), the
- * features it provides are fully live — signed calls, the account's library,
- * history, likes — while the account itself stays anonymous (the owner's
- * corrected decision, 2026-11-22): no name, avatar, email or handle is ever
- * read or returned, so no screen can show one. The credential itself never
- * crosses back to the page in any form.
+ * chooses no session for anyone, and connecting is the page's business — its
+ * own jar, held in its browser and attached per call (below).
+ *
+ * Two credentials can sign here, and precedence is fixed: the visitor's own
+ * jar (the `x-bitchord-user-jar` header, private-deployment.md 2026-11-22)
+ * outranks the fallback wherever both could apply — their calls are theirs,
+ * their library, their history — and the fallback covers everyone else:
+ * signed calls, the library, history, likes, fully live, while the throwaway
+ * account itself stays anonymous (the owner's corrected decision, 2026-11-22)
+ * — no name, avatar, email or handle of it is ever read or returned, so no
+ * screen can show one. When the request carries a usable user jar,
+ * `yt.authState` reads and answers the visitor's own identity instead — the
+ * one identity allowed to cross, because it is theirs. Neither credential
+ * ever crosses back to the page in any form.
  */
 
 /**
@@ -72,6 +80,9 @@ const SIGNED_OUT_YT: YtAuthState = {
  * app keys its query-cache resets on the chosen identity's id, empty so the
  * UI renders its sign-in prompt where an account's own would have shown.
  * `browserSignedIn` stays false: the browser holds nothing; the relay does.
+ * (The account_menu identity read exists for the *visitor's* jar —
+ * `userjar.ts` — and only for it; the fallback's own identity stays
+ * unread.)
  */
 const SHARED_SESSION_YT: YtAuthState = {
   browserSignedIn: false,
@@ -80,6 +91,22 @@ const SHARED_SESSION_YT: YtAuthState = {
   accounts: [],
   active: { id: 'relay-session', name: '', handle: null, avatarUrl: null, brand: false, authUser: '0' },
   problem: null,
+};
+
+/**
+ * What `yt.authState` answers when the request carried a jar that holds no
+ * YouTube session: signed out, with the problem saying what was wrong with
+ * the paste — the connect flow shows that sentence, and the page's next read
+ * drops the stored jar (useYtAuth) so features fall back undamaged.
+ */
+const NO_SESSION_YT: YtAuthState = {
+  browserSignedIn: false,
+  connected: false,
+  signedIn: false,
+  accounts: [],
+  active: null,
+  problem:
+    'The cookies hold nothing YouTube can sign with — no SAPISID-family cookie (SAPISID, __Secure-3PAPISID, __Secure-1PAPISID). Export again from a signed-in browser.',
 };
 
 /** What a dispatch needs from the world: the upstream fetch, the cache, and the operator's fallback credential (or null). Injected so tests run without a network. */
@@ -97,6 +124,17 @@ export interface DispatchDeps {
 /** The server's own wiring; index.ts spreads the loaded fallback into it. */
 export const dispatchDeps: DispatchDeps = { fetchImpl: fetch, cache: new RelayCache(), fallback: null };
 
+/**
+ * What one request carries beyond its envelope: the visitor's own YouTube
+ * jar, read from the `x-bitchord-user-jar` HTTP header by index.ts. Raw
+ * cookies.txt / `Cookie:` line text, page-held and forwarded per call —
+ * nothing is derived here, nothing is kept: the credential built from it
+ * lives exactly as long as the request being answered.
+ */
+export interface RequestContext {
+  userJar?: string;
+}
+
 /** One proxied request, prepared and validated. */
 interface Prepared {
   method: 'GET' | 'POST' | 'HEAD';
@@ -113,7 +151,7 @@ interface Prepared {
 function prepare(
   methodName: string,
   params: HttpRequest,
-  options: { forwardAuthorization?: boolean } = {},
+  options: { forwardAuthorization?: boolean; forwardVisitorId?: boolean } = {},
 ): Prepared {
   if (typeof params.url !== 'string' || !params.url) {
     throw Object.assign(new Error(`${methodName} needs a url`), { code: 'protocol' });
@@ -130,6 +168,20 @@ function prepare(
     params.body === undefined ? undefined : params.bodyEncoding === 'base64' ? toBytes(params.body) : params.body;
   // A bad url throws here and lands in failure() as a network error.
   return { method, url: new URL(params.url), headers, body: body as BodyInit | undefined };
+}
+
+/**
+ * The stats-ping family, decided from the raw param before `prepare` owns
+ * the url's error handling: sanitisation needs to know whether the call is
+ * one of the pings whose protocol carries the page's visitor id.
+ */
+function statsFamily(url: unknown): boolean {
+  if (typeof url !== 'string' || !url) return false;
+  try {
+    return isStatsUrl(new URL(url));
+  } catch {
+    return false;
+  }
 }
 
 /** The allowlist's refusal, naming exactly what was asked for. */
@@ -205,9 +257,14 @@ async function upstream(
 /**
  * Answers one bridge request. Never throws: every failure lands in the
  * envelope as a `BridgeResponse` error, so the page sees the code rather
- * than a dropped call.
+ * than a dropped call. [ctx] carries what arrived with the request outside
+ * the envelope — the visitor's page-held jar, when the call brought one.
  */
-export async function handle(request: BridgeRequest, deps: DispatchDeps): Promise<BridgeResponse> {
+export async function handle(
+  request: BridgeRequest,
+  deps: DispatchDeps,
+  ctx: RequestContext = {},
+): Promise<BridgeResponse> {
   if (request.protocol !== BRIDGE_PROTOCOL) {
     return errorResponse(
       request.id,
@@ -230,13 +287,17 @@ export async function handle(request: BridgeRequest, deps: DispatchDeps): Promis
         });
       case 'yt.fetch': {
         const params = (request.params ?? {}) as YtFetchParams;
-        if (params.auth === true && !deps.fallback) {
-          // The refusal stands when there is no fallback: the relay holds no
-          // YouTube session and won't pretend to sign one. With a fallback
-          // loaded, an auth call is served exactly like an anonymous one —
-          // signed with the account the relay holds, because the page has no
-          // credential of its own to add (private-deployment.md: "auth: true
-          // stops answering unauthenticated").
+        // The visitor's jar, when the request carried one and it parses into a
+        // session. Null means "not a credential" (nothing pasted, or a paste
+        // with no session in it): signing then falls to the fallback exactly
+        // as with no header at all, so a broken store never breaks a feature.
+        const userJar = ctx.userJar ? UserCredential.fromText(ctx.userJar) : null;
+        if (params.auth === true && !deps.fallback && !userJar) {
+          // The refusal stands when there is nothing to sign with: no
+          // fallback and no page-held jar. With either, an auth call is
+          // served exactly like an anonymous one — signed with the session
+          // the request belongs to (private-deployment.md: "auth: true stops
+          // answering unauthenticated").
           return errorResponse(
             request.id,
             'unauthenticated',
@@ -244,9 +305,14 @@ export async function handle(request: BridgeRequest, deps: DispatchDeps): Promis
           );
         }
         // A page-held Authorization is forwarded untouched (see hosts.ts), so
-        // the caller bringing its own credential keeps it: the fallback signs
-        // only the calls with none.
-        const { method, url, headers, body } = prepare('yt.fetch', params, { forwardAuthorization: true });
+        // the caller bringing its own credential keeps it: the jar signs only
+        // the calls with none. The stats family also carries the page's
+        // visitor id — the protocol's own field, matched to the session that
+        // played (hosts.ts's `forwardVisitorId`).
+        const { method, url, headers, body } = prepare('yt.fetch', params, {
+          forwardAuthorization: true,
+          forwardVisitorId: statsFamily(params.url),
+        });
         const impersonation = ytImpersonationFor(url);
         if (!impersonation) throw forbidden('yt.fetch', url);
         // A playback-tracking ping is a side effect, not a read (hosts.ts):
@@ -259,22 +325,26 @@ export async function handle(request: BridgeRequest, deps: DispatchDeps): Promis
           });
         }
         const pageAuthorized = headers.authorization !== undefined;
-        // InnerTube calls and the stats pings are the two families the
-        // fallback signs; the session bootstrap and BotGuard rows stay
-        // anonymous exactly as the impersonation table dresses them.
+        // InnerTube calls and the stats pings are the two families a jar
+        // signs; the session bootstrap and BotGuard rows stay anonymous
+        // exactly as the impersonation table dresses them.
         const signOrigin = isInnerTubeUrl(url) || statsPing ? impersonation.origin : undefined;
-        // UNSIGNED_CLIENTS keep their calls anonymous even under a fallback:
+        // UNSIGNED_CLIENTS keep their calls anonymous even under a jar:
         // their requests malformed with a session attached are refused outright.
         const unsignedClient = UNSIGNED_CLIENTS.has(bodyClientName(body) ?? '');
+        // The visitor's jar outranks the fallback: a call their session signs
+        // is theirs — their library, their likes, their history.
+        const signer: FallbackCredential | UserCredential | null = userJar ?? deps.fallback ?? null;
         const signed =
-          deps.fallback && signOrigin && !pageAuthorized && !unsignedClient
-            ? deps.fallback.sign(signOrigin, Math.floor(Date.now() / 1000))
+          signer && signOrigin && !pageAuthorized && !unsignedClient
+            ? signer.sign(signOrigin, Math.floor(Date.now() / 1000))
             : null;
+        const userSigned = userJar !== null && !!signOrigin && !pageAuthorized && !unsignedClient;
         // The credential must never become a cache key (hygiene), so the key
-        // cannot tell the fallback's answers from a page credential's; calls
-        // carrying one therefore bypass the shared cache in both directions —
-        // and so do the stats pings, whose effect lives on YouTube's side.
-        const cacheable = method === 'GET' && !pageAuthorized && !statsPing;
+        // cannot tell one identity's answers from another's; calls carrying
+        // one therefore bypass the shared cache in both directions — and so
+        // do the stats pings, whose effect lives on YouTube's side.
+        const cacheable = method === 'GET' && !pageAuthorized && !statsPing && !userSigned;
         if (cacheable) {
           const cached = deps.cache.lookup('yt.fetch', url.href);
           if (cached) return okResponse(request.id, cached);
@@ -287,8 +357,9 @@ export async function handle(request: BridgeRequest, deps: DispatchDeps): Promis
             headers: { ...headers, ...impersonation, ...(signed ?? {}), 'user-agent': CHROMIUM_USER_AGENT },
             body,
           },
-          // The call's rotations belong to the credential that signed it.
-          signed ? deps.fallback : undefined,
+          // The call's rotations belong to the fallback that signed it — a
+          // user jar absorbs nothing, and stays nowhere.
+          signed && !userSigned ? deps.fallback : undefined,
         );
         if (cacheable) deps.cache.store('yt.fetch', url.href, response);
         return okResponse(request.id, response);
@@ -338,12 +409,25 @@ export async function handle(request: BridgeRequest, deps: DispatchDeps): Promis
         // A no-op: there is no permission prompt on a server, so nothing to open.
         return okResponse(request.id, {});
       case 'yt.authState': {
-        // With a fallback loaded the answer is the functional, identity-free
-        // session (SHARED_SESSION_YT): the features are live, the account is
-        // not. No upstream call is ever made to read one — the identity-read
-        // code is gone by design — so the operator's health check for the
-        // credential remains the probe, not this answer. Without a fallback
-        // the static signed-out answer stands.
+        // A request carrying the visitor's jar asks about *their* session:
+        // one account_menu read, signed as them, answers their identity —
+        // the only identity a relay answer may ever carry, because it is the
+        // visitor's own. Every other request gets the static answers: with a
+        // fallback loaded the functional, identity-free session
+        // (SHARED_SESSION_YT) — the features are live, the throwaway account
+        // is not, and no upstream call is ever made to read one — and without
+        // one the static signed-out answer stands.
+        const jarText = ctx.userJar;
+        if (jarText !== undefined && jarText !== '') {
+          const credential = UserCredential.fromText(jarText);
+          if (!credential) {
+            return okResponse(
+              request.id,
+              NO_SESSION_YT,
+            );
+          }
+          return okResponse(request.id, await readUserIdentity(deps.fetchImpl, credential));
+        }
         return okResponse(request.id, deps.fallback ? SHARED_SESSION_YT : SIGNED_OUT_YT);
       }
       default:

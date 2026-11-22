@@ -2,6 +2,7 @@ import { detectExtension, type DetectedExtension } from '@bitchord/shared/bridge
 import { useQuery } from '@tanstack/react-query';
 import { config } from '@/config';
 import { queryClient } from '@/lib/queryClient';
+import { getUserJar } from './userJar';
 
 export type ExtensionStatus =
   | { state: 'checking' }
@@ -27,7 +28,10 @@ const SLOW_RECHECK_MS = 5000;
  */
 export async function detect(): Promise<DetectedExtension | null> {
   const known = queryClient.getQueryData<DetectedExtension | null>(extensionQueryKey) ?? null;
-  const base = { serverBridgeUrl: config.relayUrl || undefined };
+  // The jar accessor is handed to the bridge once, at detection, and read per
+  // call from then on: connecting and disconnecting change the store, and the
+  // next call picks that up without a new transport (server.ts's contract).
+  const base = { serverBridgeUrl: config.relayUrl || undefined, userJar: getUserJar };
   const found = await detectExtension(base);
   if (found || !known) return found;
   return (await detectExtension({ ...base, timeoutMs: 4000 })) ?? known;

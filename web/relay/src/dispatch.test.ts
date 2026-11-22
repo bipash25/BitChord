@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { RelayCache } from './cache.js';
 import { BRIDGE_CHANNEL, BRIDGE_PROTOCOL, isBridgeRequest, type BridgeRequest, type Capability, type HttpResponse } from './contract.js';
 import { dispatchDeps, handle, FALLBACK_CAPABILITIES, RELAY_CAPABILITIES } from './dispatch.js';
-import { FallbackCredential, parseCookieJar } from './fallback.js';
+import { FallbackCredential, parseCookieJar, sapisidhash } from './fallback.js';
 import { CHROMIUM_USER_AGENT } from './hosts.js';
 import { VERSION } from './version.js';
 
@@ -73,6 +73,42 @@ const ACCOUNT_MENU_BODY = JSON.stringify({
 
 /** A one-cookie jar with an obviously-secret value, distinct per use so leak hunts can't cross-contaminate. */
 const burner = () => new FallbackCredential(parseCookieJar('.google.com\tTRUE\t/\tFALSE\t1893456000\tSAPISID\tburner-secret'));
+
+/**
+ * The visitor's page-held jar as the page sends it: raw `Cookie:` line text,
+ * with values distinct from the burner's so precedence and leak hunts can
+ * tell them apart. `USER_JAR_NO_SESSION` parses but holds no SAPISID-family
+ * cookie — the can't-sign shape.
+ */
+const USER_JAR = 'Cookie: SID=user-sid; SAPISID=user-secret';
+const USER_JAR_NO_SESSION = 'Cookie: GPS=only-a-visitor-cookie';
+
+/**
+ * The account_menu answer for the visitor's own account: the same field
+ * shapes as the burner's body, an identity that is unmistakably somebody
+ * else's.
+ */
+const USER_MENU_BODY = JSON.stringify({
+  responseContext: { serviceTrackingParams: [{ params: [{ key: 'logged_in', value: '1' }] }] },
+  actions: [
+    {
+      openPopupAction: {
+        popup: {
+          multiPageMenuRenderer: {
+            header: {
+              activeAccountHeaderRenderer: {
+                accountName: { runs: [{ text: 'Ada Lovelace' }] },
+                email: { simpleText: 'ada@example.com' },
+                channelHandle: { runs: [{ text: '@ada' }] },
+                accountPhoto: { thumbnails: [{ url: 'https://yt3.ggpht.com/ada.png' }] },
+              },
+            },
+          },
+        },
+      },
+    },
+  ],
+});
 
 describe('envelope', () => {
   it('refuses a protocol the relay does not speak', async () => {
@@ -690,5 +726,342 @@ describe('the server wiring', () => {
     expect(typeof dispatchDeps.fetchImpl).toBe('function');
     expect(dispatchDeps.cache).toBeInstanceOf(RelayCache);
     expect(dispatchDeps.fallback).toBeNull();
+  });
+});
+
+describe("the visitor's page-held jar (private-deployment.md, 2026-11-22)", () => {
+  it('signs InnerTube calls with the jar — a SAPISIDHASH for the dressed origin, and X-Goog-AuthUser', async () => {
+    const { deps, fetches } = makeDeps();
+    await handle(
+      request('yt.fetch', { url: 'https://www.youtube.com/youtubei/v1/player', method: 'POST', body: '{"videoId":"x"}' }),
+      deps,
+      { userJar: USER_JAR },
+    );
+    const headers = sentHeaders(fetches);
+    expect(headers['cookie']).toBe('SID=user-sid; SAPISID=user-secret');
+    expect(headers['authorization']).toMatch(/^SAPISIDHASH \d+_[0-9a-f]{40}$/);
+    expect(headers['x-goog-authuser']).toBe('0');
+    // The call is still dressed the way the table says.
+    expect(headers['origin']).toBe('https://www.youtube.com');
+    expect(headers['referer']).toBe('https://www.youtube.com/');
+  });
+
+  it('outranks the fallback when both could sign: the visitor’s calls are theirs', async () => {
+    const { deps, fetches } = makeDeps(undefined, burner());
+    await handle(request('yt.fetch', { url: 'https://www.youtube.com/youtubei/v1/player' }), deps, { userJar: USER_JAR });
+    const headers = sentHeaders(fetches);
+    expect(headers['cookie']).toBe('SID=user-sid; SAPISID=user-secret');
+    expect(headers['cookie']).not.toContain('burner-secret');
+  });
+
+  it('serves auth:true with a user jar even on a relay with no fallback', async () => {
+    const { deps, fetches } = makeDeps();
+    const served = await handle(
+      request('yt.fetch', { url: 'https://www.youtube.com/youtubei/v1/player', auth: true }),
+      deps,
+      { userJar: USER_JAR },
+    );
+    expect(served).toMatchObject({ ok: true, result: { status: 200 } });
+    expect(sentHeaders(fetches)['cookie']).toBe('SID=user-sid; SAPISID=user-secret');
+  });
+
+  it('never caches a user-signed answer — the URL-only key cannot tell identities apart', async () => {
+    const { deps, fetches } = makeDeps(undefined, burner());
+    const url = 'https://www.youtube.com/youtubei/v1/browse';
+    await handle(request('yt.fetch', { url }), deps, { userJar: USER_JAR });
+    await handle(request('yt.fetch', { url }), deps, { userJar: USER_JAR });
+    // Every jar-carrying call reached YouTube; the same URL without one is
+    // the shared family and caches exactly as before.
+    expect(fetches).toHaveLength(2);
+    await handle(request('yt.fetch', { url }), deps);
+    await handle(request('yt.fetch', { url }), deps);
+    expect(fetches).toHaveLength(3);
+  });
+
+  it('signs the playback-tracking stats pings with the visitor’s jar — their history, not the burner’s', async () => {
+    const { deps, fetches } = makeDeps(undefined, burner());
+    const url = 'https://s.youtube.com/api/stats/playback?cl=TEST&cpn=nonce';
+    const served = await handle(
+      request('yt.fetch', { url, method: 'GET', headers: { 'X-Goog-Visitor-Id': 'visitor-of-the-session' }, auth: true }),
+      deps,
+      { userJar: USER_JAR },
+    );
+    expect(served).toMatchObject({ ok: true, result: { status: 200 } });
+    const headers = sentHeaders(fetches);
+    expect(headers['origin']).toBe('https://music.youtube.com');
+    expect(headers['cookie']).toBe('SID=user-sid; SAPISID=user-secret');
+    // The visitor id is part of the ping's protocol, and the session-bound
+    // one the page read rides it — matched to the account that played.
+    expect(headers['x-goog-visitor-id']).toBe('visitor-of-the-session');
+    // And the ping is still a side effect: never served from a cache.
+    await handle(request('yt.fetch', { url, method: 'GET', auth: true }), deps, { userJar: USER_JAR });
+    expect(fetches).toHaveLength(2);
+  });
+
+  it('leaves the session bootstrap and BotGuard rows unsigned and cached under a jar', async () => {
+    const { deps, fetches } = makeDeps(undefined, burner());
+    await handle(request('yt.fetch', { url: 'https://www.youtube.com/iframe_api' }), deps, { userJar: USER_JAR });
+    await handle(request('yt.fetch', { url: 'https://www.youtube.com/iframe_api' }), deps, { userJar: USER_JAR });
+    await handle(request('yt.fetch', { url: 'https://www.youtube.com/api/jnn/GenerateIT' }), deps, { userJar: USER_JAR });
+    expect(fetches).toHaveLength(2); // the 10-minute family still shares; the jar never signed these rows
+    for (const call of fetches) {
+      const headers = call.init?.headers as Record<string, string>;
+      expect(headers['cookie']).toBeUndefined();
+      expect(headers['authorization']).toBeUndefined();
+    }
+  });
+
+  it('leaves an unsigned-by-design client (VISIONOS) anonymous under a jar too', async () => {
+    const { deps, fetches } = makeDeps(undefined, burner());
+    await handle(
+      request('yt.fetch', {
+        url: 'https://www.youtube.com/youtubei/v1/player',
+        method: 'POST',
+        body: '{"context":{"client":{"clientName":"VISIONOS","clientVersion":"0.1"}},"videoId":"x"}',
+      }),
+      deps,
+      { userJar: USER_JAR },
+    );
+    const headers = sentHeaders(fetches);
+    expect(headers['cookie']).toBeUndefined();
+    expect(headers['authorization']).toBeUndefined();
+    expect(headers['x-goog-authuser']).toBeUndefined();
+  });
+
+  it('leaves a page-held Authorization untouched ahead of the jar, and its answer uncached', async () => {
+    const { deps, fetches } = makeDeps(undefined, burner());
+    const url = 'https://www.youtube.com/youtubei/v1/player';
+    await handle(request('yt.fetch', { url, headers: { authorization: 'Bearer page-token' } }), deps, { userJar: USER_JAR });
+    const headers = sentHeaders(fetches);
+    expect(headers['authorization']).toBe('Bearer page-token');
+    expect(headers['cookie']).toBeUndefined();
+    await handle(request('yt.fetch', { url }), deps);
+    expect(fetches).toHaveLength(2);
+  });
+
+  it('treats a jar that cannot sign as absent: the fallback covers, nothing breaks', async () => {
+    // With a fallback loaded, the broken store falls back to it — a jar with
+    // a session id but no SAPISID-family name cannot build the signature
+    // (the name match is the point; a substring test would pass it).
+    const withFallback = makeDeps(undefined, burner());
+    for (const jar of [USER_JAR_NO_SESSION, 'Cookie: SID=only-a-session-id']) {
+      await handle(
+        request('yt.fetch', { url: 'https://www.youtube.com/youtubei/v1/player' }),
+        withFallback.deps,
+        { userJar: jar },
+      );
+      expect(sentHeaders(withFallback.fetches)['cookie']).toBe('SAPISID=burner-secret');
+    }
+    // And its answer is the shared family, so it caches: not a credential.
+    await handle(request('yt.fetch', { url: 'https://www.youtube.com/youtubei/v1/player' }), withFallback.deps, {
+      userJar: USER_JAR_NO_SESSION,
+    });
+    expect(withFallback.fetches).toHaveLength(1);
+    // Without one, an auth call goes back to refusing: a broken paste is no
+    // credential to sign with.
+    const bare = makeDeps();
+    const refused = await handle(
+      request('yt.fetch', { url: 'https://www.youtube.com/youtubei/v1/player', auth: true }),
+      bare.deps,
+      { userJar: USER_JAR_NO_SESSION },
+    );
+    expect(refused).toMatchObject({ ok: false, error: { code: 'unauthenticated' } });
+    expect(bare.fetches).toHaveLength(0);
+  });
+
+  it('accepts a __Secure-only jar as the real login it is — the working set is the SAPISID family, by name', async () => {
+    const { deps, fetches } = makeDeps();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+    try {
+      await handle(
+        request('yt.fetch', { url: 'https://music.youtube.com/youtubei/v1/player', method: 'POST', body: '{"videoId":"x"}' }),
+        deps,
+        { userJar: 'Cookie: __Secure-3PAPISID=3p-secret; __Secure-3PSID=3p-sid' },
+      );
+    } finally {
+      clock.mockRestore();
+    }
+    const headers = sentHeaders(fetches);
+    expect(headers['cookie']).toBe('__Secure-3PAPISID=3p-secret; __Secure-3PSID=3p-sid');
+    // The SAPISIDHASH is built over the __Secure-3PAPISID secret for the
+    // origin the call is dressed as.
+    expect(headers['authorization']).toBe(sapisidhash('3p-secret', 'https://music.youtube.com', 1_700_000_000));
+  });
+
+  it('absorbs nothing from a user-signed call: the page’s copy is the only copy, and Set-Cookie never crosses', async () => {
+    const rotate = () =>
+      new Response('{"ok":true}', {
+        status: 200,
+        headers: [
+          ['content-type', 'application/json'],
+          ['set-cookie', '__Secure-1PSIDTS=rotated; Path=/; Domain=.youtube.com; Secure'],
+        ],
+      });
+    const { deps, fetches } = makeDeps(rotate, burner());
+    const url = 'https://www.youtube.com/youtubei/v1/player';
+    for (const _ of [1, 2]) {
+      const answer = (await handle(request('yt.fetch', { url, method: 'POST', body: '{"videoId":"x"}' }), deps, {
+        userJar: USER_JAR,
+      })) as { ok: boolean; result: HttpResponse };
+      expect(answer.ok).toBe(true);
+      expect(answer.result.headers['set-cookie']).toBeUndefined();
+    }
+    // The relay stayed stateless: the second call signs with the page's text
+    // exactly as the first did — no rotation was kept anywhere.
+    const second = (fetches[1]?.init?.headers ?? {}) as Record<string, string>;
+    expect(second['cookie']).toBe('SID=user-sid; SAPISID=user-secret');
+    expect(second['cookie']).not.toContain('__Secure-1PSIDTS');
+  });
+
+  it('answers authState with the visitor’s identity, read from account_menu signed as them', async () => {
+    const { deps, fetches } = makeDeps(
+      (url) =>
+        url.includes('account_menu')
+          ? new Response(USER_MENU_BODY, { status: 200, headers: { 'content-type': 'application/json' } })
+          : new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } }),
+    );
+    const answer = await handle(request('yt.authState', { refresh: true }), deps, { userJar: USER_JAR });
+    // Their identity is the one identity allowed to cross, because it is theirs.
+    expect(answer).toMatchObject({
+      ok: true,
+      result: {
+        browserSignedIn: false,
+        connected: true,
+        signedIn: true,
+        accounts: [
+          {
+            authUser: '0',
+            name: 'Ada Lovelace',
+            email: 'ada@example.com',
+            avatarUrl: 'https://yt3.ggpht.com/ada.png',
+            channels: [{ id: '0:own', name: 'Ada Lovelace', handle: '@ada', avatarUrl: 'https://yt3.ggpht.com/ada.png', brand: false }],
+          },
+        ],
+        active: { id: '0:own', name: 'Ada Lovelace', handle: '@ada', avatarUrl: 'https://yt3.ggpht.com/ada.png', brand: false, authUser: '0' },
+        problem: null,
+      },
+    });
+    // The read itself: account_menu on the music origin, WEB_REMIX dressed,
+    // signed with the visitor's jar.
+    const call = fetches[0];
+    expect(String(call?.url)).toBe('https://music.youtube.com/youtubei/v1/account/account_menu?prettyPrint=false');
+    const headers = (call?.init?.headers ?? {}) as Record<string, string>;
+    expect(headers['cookie']).toBe('SID=user-sid; SAPISID=user-secret');
+    expect(headers['authorization']).toMatch(/^SAPISIDHASH \d+_[0-9a-f]{40}$/);
+    expect(headers['origin']).toBe('https://music.youtube.com');
+    expect(String(call?.init?.body)).toContain('WEB_REMIX');
+    // The relay is stateless: every ask reads again, never a cached identity.
+    await handle(request('yt.authState', {}), deps, { userJar: USER_JAR });
+    expect(fetches).toHaveLength(2);
+  });
+
+  it('answers authState with what YouTube said when the jar is refused — the identity problem path', async () => {
+    const { deps, fetches } = makeDeps(
+      (url) =>
+        url.includes('account_menu')
+          ? new Response('<html>sign in</html>', { status: 403, headers: { 'content-type': 'text/html' } })
+          : new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } }),
+    );
+    const answer = await handle(request('yt.authState', {}), deps, { userJar: USER_JAR });
+    expect(answer).toMatchObject({
+      ok: true,
+      result: { signedIn: false, connected: false, accounts: [], active: null, problem: expect.stringContaining('HTTP 403') },
+    });
+    expect(fetches).toHaveLength(1); // the refusal was read, not assumed
+    // The no-account answer (logged_in 0) says so in YouTube's own terms.
+    const signedOut = makeDeps(
+      (url) =>
+        url.includes('account_menu')
+          ? new Response(JSON.stringify({ responseContext: { serviceTrackingParams: [{ params: [{ key: 'logged_in', value: '0' }] }] } }), {
+              status: 200,
+              headers: { 'content-type': 'application/json' },
+            })
+          : new Response('{"ok":true}', { status: 200 }),
+    );
+    const asIfSignedOut = await handle(request('yt.authState', {}), signedOut.deps, { userJar: USER_JAR });
+    expect(asIfSignedOut).toMatchObject({
+      ok: true,
+      result: { signedIn: false, problem: expect.stringContaining('as if signed out') },
+    });
+  });
+
+  it('answers authState with the no-session problem for a paste that cannot sign, asking YouTube nothing', async () => {
+    const { deps, fetches } = makeDeps();
+    const answer = await handle(request('yt.authState', {}), deps, { userJar: USER_JAR_NO_SESSION });
+    expect(answer).toMatchObject({
+      ok: true,
+      result: { signedIn: false, problem: expect.stringContaining('no SAPISID-family cookie') },
+    });
+    expect(fetches).toHaveLength(0);
+    // An empty header is no header: the static answers stand.
+    const empty = await handle(request('yt.authState', {}), deps, { userJar: '' });
+    expect(empty).toMatchObject({ ok: true, result: { signedIn: false, problem: null } });
+  });
+
+  it('still answers the static states when the request carries no jar — the invisible fallback stands', async () => {
+    const { deps, fetches } = makeDeps(
+      (url) =>
+        url.includes('account_menu')
+          ? new Response(USER_MENU_BODY, { status: 200, headers: { 'content-type': 'application/json' } })
+          : new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } }),
+      burner(),
+    );
+    const answer = await handle(request('yt.authState', { refresh: true }), deps);
+    expect(answer).toMatchObject({ ok: true, result: { signedIn: true, active: { name: '' } } });
+    const json = JSON.stringify(answer);
+    for (const identity of ['Ada Lovelace', 'ada@example.com', '@ada', 'ada.png']) {
+      expect(json.includes(identity), identity).toBe(false);
+    }
+    expect(fetches).toHaveLength(0);
+  });
+
+  it('leaks no part of a page-held jar, or its signature, into any answer or error the dispatcher can produce', async () => {
+    const respond = (url: string) =>
+      url.includes('account_menu')
+        ? new Response('<html>sign in</html>', { status: 403, headers: { 'content-type': 'text/html' } })
+        : new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } });
+    const wired = makeDeps(respond, burner());
+    const answers: unknown[] = [];
+    for (const req of [
+      request('yt.fetch', { url: 'https://www.youtube.com/youtubei/v1/player', method: 'POST', body: '{}' }),
+      request('yt.fetch', { url: 'https://www.youtube.com/youtubei/v1/browse' }),
+      request('yt.fetch', { url: 'https://www.youtube.com/sw.js_data' }),
+      request('yt.fetch', { url: 'https://www.youtube.com/youtubei/v1/player', auth: true }),
+      request('yt.fetch', { url: 'https://s.youtube.com/api/stats/playback?cpn=nonce', auth: true }),
+      request('yt.authState', {}),
+      request('yt.authState', {}),
+    ]) {
+      answers.push(await handle(req, wired.deps, { userJar: USER_JAR }));
+    }
+    // And the failure paths: a dead upstream mid-read, a body-less protocol
+    // error, and a network-shaped account_menu failure.
+    const dead = makeDeps(
+      () => {
+        throw new TypeError('fetch failed');
+      },
+      burner(),
+    );
+    answers.push(await handle(request('yt.fetch', { url: 'https://www.youtube.com/youtubei/v1/player' }), dead.deps, { userJar: USER_JAR }));
+    answers.push(await handle(request('yt.fetch', {}), dead.deps, { userJar: USER_JAR }));
+    answers.push(await handle(request('yt.authState', {}), dead.deps, { userJar: USER_JAR }));
+
+    // The exact strings that must never come back: the jar as sent, each
+    // value alone, the raw pasted text, and each SAPISIDHASH as sent.
+    const sent = [...wired.fetches, ...dead.fetches].flatMap((call) =>
+      Object.values((call.init?.headers ?? {}) as Record<string, string>),
+    );
+    const forbidden = new Set([
+      USER_JAR,
+      'SID=user-sid; SAPISID=user-secret',
+      'user-sid',
+      'user-secret',
+      ...sent.filter((value) => value.startsWith('SAPISIDHASH ')),
+    ]);
+    for (const answer of answers) {
+      const json = JSON.stringify(answer);
+      for (const secret of forbidden) {
+        expect(json.includes(secret), `leaked ${secret.slice(0, 12)}…`).toBe(false);
+      }
+    }
   });
 });

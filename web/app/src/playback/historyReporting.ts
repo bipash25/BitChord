@@ -4,6 +4,7 @@ import type { DetectedExtension } from '@bitchord/shared/bridge';
 import { getBridge } from '@/extension/bridge';
 import { extensionQueryKey } from '@/extension/useExtension';
 import { ensureYtAuth } from '@/extension/useYtAuth';
+import { getUserJar } from '@/extension/userJar';
 import { queryClient } from '@/lib/queryClient';
 import { getAudio, onTrackEnded, usePlayer } from '@/state/player';
 import { getSignedInnertube } from './youtube/innertube';
@@ -27,7 +28,8 @@ export const useHistorySettings = create<{ share: boolean; setShare: (on: boolea
  *
  * The URLs come from a signed-in WEB_REMIX /player call, which only includes
  * them when it quotes the current player's signatureTimestamp. The calls and
- * the pings travel through the transport, which signs them as the account;
+ * the pings travel through the transport, which signs them as the account —
+ * the visitor's own when a jar is connected, the anonymous session otherwise;
  * the page never sees the credentials. Best effort: nothing here touches
  * playback.
  */
@@ -45,6 +47,13 @@ interface Tracking {
   watchtime: string | null;
   atr: string | null;
   atrAfterSec: number;
+  /**
+   * The visitor id YouTube answered the tracking /player call with — the
+   * session-bound one (the app's rule: a play reported under an anonymous
+   * visitor id is reported about nobody). Null when the answer carried none;
+   * ping() then falls back to the session's own mint.
+   */
+  visitor: string | null;
 }
 
 interface Session {
@@ -63,7 +72,10 @@ const newCpn = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) 
 
 function extensionSupportsStats(): boolean {
   const detected = queryClient.getQueryData<DetectedExtension | null>(extensionQueryKey);
-  return !!detected?.info.capabilities.includes('yt.stats');
+  // The transport signs the pings when it holds a session of its own, or when
+  // this browser's own jar is connected: either way the plays land in a real
+  // account's history — the visitor's when they've connected it.
+  return !!detected?.info.capabilities.includes('yt.stats') || getUserJar() !== null;
 }
 
 type Raw = Record<string, unknown>;
@@ -96,11 +108,13 @@ async function fetchTracking(videoId: string): Promise<Tracking | null> {
     return null;
   }
   const atrAfter = Number((tracking.atrUrl as Raw | undefined)?.elapsedMediaTimeSeconds);
+  const visitor = (data.responseContext as Raw | undefined)?.visitorData;
   return {
     playback,
     watchtime: baseUrl(tracking, 'videostatsWatchtimeUrl'),
     atr: baseUrl(tracking, 'atrUrl'),
     atrAfterSec: Number.isFinite(atrAfter) && atrAfter > 0 ? atrAfter : DEFAULT_ATR_SEC,
+    visitor: typeof visitor === 'string' ? visitor : null,
   };
 }
 
@@ -126,15 +140,17 @@ async function statsUrl(base: string, cpn: string, extra: Record<string, string>
   return url.toString();
 }
 
-async function ping(url: string): Promise<number> {
+async function ping(url: string, visitor: string | null): Promise<number> {
   const bridge = getBridge();
   if (!bridge) throw new Error('no relay');
-  const yt = await getSignedInnertube();
-  const visitor = yt.session.context.client.visitorData;
+  // The session-bound id from the tracking /player answer outranks the
+  // session's anonymous mint — the play is reported about the account that
+  // played it — with the mint as the fallback when the answer carried none.
+  const id = visitor ?? (await getSignedInnertube()).session.context.client.visitorData;
   const response = await bridge.call('yt.fetch', {
     url,
     method: 'GET',
-    headers: visitor ? { 'X-Goog-Visitor-Id': visitor } : {},
+    headers: id ? { 'X-Goog-Visitor-Id': id } : {},
     auth: true,
   });
   if (response.status >= 400) throw new Error(`HTTP ${response.status}`);
@@ -153,7 +169,7 @@ async function open(videoId: string): Promise<void> {
       const tracking = await fetchTracking(videoId);
       if (!tracking || opening !== videoId) return;
       const cpn = newCpn();
-      const status = await ping(await statsUrl(tracking.playback, cpn));
+      const status = await ping(await statsUrl(tracking.playback, cpn), tracking.visitor);
       if (opening !== videoId) return;
       session = { videoId, cpn, tracking, reported: 0, flushingTo: 0, atrSent: false, heard: 0 };
       trackLog.i(`history: play registered for ${videoId} (HTTP ${status})`);
@@ -182,6 +198,7 @@ async function flush(target: Session, seconds: number, final = false): Promise<v
         state: final ? 'paused' : 'playing',
         ...(final && { final: '1' }),
       }),
+      target.tracking.visitor,
     );
     target.reported = Math.max(target.reported, seconds);
   } catch (error) {
@@ -224,7 +241,7 @@ function sample(): void {
     current.atrSent = true;
     // Its base URL already carries ver, c and cver; it goes as it is, with the nonce.
     void statsUrl(current.tracking.atr, current.cpn, {}, true)
-      .then(ping)
+      .then((url) => ping(url, current.tracking.visitor))
       .catch((error: unknown) => trackLog.w(`history: atr for ${current.videoId} failed: ${String(error)}`));
   }
   if (position - Math.max(current.reported, current.flushingTo) >= REPORT_INTERVAL_SEC) void flush(current, position);

@@ -1,5 +1,5 @@
 import { type BridgeEvent, type BridgeMethod, type CallOptions, type ParamsOf, type ResultOf } from './protocol';
-import { serverBridge } from './server';
+import { serverBridge, type ServerBridgeOptions } from './server';
 
 /**
  * Page-side bridge (relay.md, phase 2): one transport — the server relay
@@ -33,6 +33,12 @@ export interface DetectOptions {
   serverBridgeUrl?: string | undefined;
   /** How long to wait for a `ping` answer. */
   timeoutMs?: number;
+  /**
+   * The page-held YouTube jar accessor, handed to the bridge so every call it
+   * ever makes can carry it (see `ServerBridgeOptions.userJar`). A function
+   * on purpose: detection runs once, sign-in state changes without it.
+   */
+  userJar?: ServerBridgeOptions['userJar'];
 }
 
 /**
@@ -41,7 +47,7 @@ export interface DetectOptions {
  */
 export async function detectExtension(options: DetectOptions = {}): Promise<DetectedExtension | null> {
   if (!options.serverBridgeUrl) return null;
-  const bridge = serverBridge(options.serverBridgeUrl);
+  const bridge = serverBridge(options.serverBridgeUrl, { userJar: options.userJar });
   try {
     const info = await bridge.call('ping', {}, { timeoutMs: options.timeoutMs ?? 1500 });
     return { bridge, info };

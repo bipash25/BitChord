@@ -1,35 +1,21 @@
-import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
+import {
+  COOKIE_NAME,
+  isCookieValue,
+  isYtHost,
+  JarCredential,
+  parseCookieJar,
+  SESSION_CORE,
+  SIGNED_ORIGINS,
+} from './credential.js';
 
-/**
- * The private deployment's fallback credential (`web/docs/private-deployment.md`):
- * a throwaway account's YouTube cookie jar, held by the relay and used to sign
- * the calls of listeners who never signed in. It is the one credential path
- * that crosses datacenter egress — anonymous `player` is refused from every
- * public IP, and the TV OAuth bearer authenticates and opens nothing — so on
- * a relay configured with it, the fallback covers the signed-out case
- * entirely.
- *
- * Hygiene is this module's spine, because the credential is a cookie: the jar
- * and the signature it builds never appear in a log line, an error, a cache
- * key or an answer to the page, and the jar is attached only to the two
- * YouTube origins the impersonation table dresses signed calls as — the
- * InnerTube rows and the playback-stats pings. It is never the page's to
- * send — a page-supplied cookie is dropped before any of this runs.
- */
+// The jar formats and the SAPISIDHASH construction live in credential.ts now,
+// shared with the visitor's page-held jar (userjar.ts); re-exported because
+// this module is where both the tests and the runbook came to know them.
+export { parseCookieJar, sapisidhash } from './credential.js';
 
 const MUSIC_ORIGIN = 'https://music.youtube.com';
 const WWW_ORIGIN = 'https://www.youtube.com';
-
-/** The origins a signed call may be dressed as: the jar's only destinations, restated as a fence. */
-const SIGNED_ORIGINS = new Set([MUSIC_ORIGIN, WWW_ORIGIN]);
-
-/**
- * The cookies whose value can sign a SAPISIDHASH, in the order Google's own
- * clients prefer them — the list the extension's `ytAuth` used, which the
- * fallback spike checked the first two of.
- */
-const SIGNING_COOKIES = ['SAPISID', '__Secure-3PAPISID', '__Secure-1PAPISID'] as const;
 
 /**
  * The first-party session cookies: the ones a signed-in export always holds
@@ -52,81 +38,6 @@ const SESSION_COOKIES = new Set([
   '__Secure-3PAPISID',
   'LOGIN_INFO',
 ]);
-
-/** The minimum a jar must hold to be a session at all: one first-party session id. */
-const SESSION_CORE = ['SID', '__Secure-1PSID'] as const;
-
-/** Whether [host] is youtube.com or google.com themselves or a subdomain: the rows a jar keeps. */
-function isYtHost(host: string): boolean {
-  return (
-    host === 'youtube.com' || host === 'google.com' || host.endsWith('.youtube.com') || host.endsWith('.google.com')
-  );
-}
-
-/** A cookie name as the header grammar allows it. */
-const COOKIE_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
-
-/**
- * A value the relay is willing to put in a header: no control characters, and
- * not empty. The jar is operator-supplied file input; a CRLF smuggled into a
- * value would otherwise become header smuggling the moment it is attached.
- */
-function isCookieValue(value: string): boolean {
-  return value.length > 0 && !/[\r\n\0]/.test(value);
-}
-
-// ---- the jar ------------------------------------------------------------------
-
-/**
- * Parses a fallback jar out of [text]: a Netscape cookies.txt (tab-separated
- * rows) or one raw `Cookie:` header line — the two shapes the runbook tells
- * an operator to produce. Ported from the spike's parser
- * (`yt-pot-test/fallback-spike.mjs`) with two tightenings: `#HttpOnly_` rows
- * are cookies, not comments — the session cookies the jar needs most (SID,
- * `__Secure-*PSID`) are HttpOnly, and skipping them would quietly sign with
- * half a session — and the domain filter is exact, so "evil-youtube.com" is
- * not a youtube.com row.
- */
-export function parseCookieJar(text: string): Map<string, string> {
-  const jar = new Map<string, string>();
-  if (text.includes('\t')) {
-    for (const line of text.split(/\r?\n/)) {
-      const row = line.startsWith('#HttpOnly_') ? line.slice('#HttpOnly_'.length) : line;
-      if (!row || row.startsWith('#')) continue;
-      const parts = row.split('\t');
-      const name = parts[5];
-      const value = parts[6];
-      if (name === undefined || value === undefined) continue;
-      if (!isYtHost((parts[0] ?? '').replace(/^\./, ''))) continue;
-      if (!COOKIE_NAME.test(name) || !isCookieValue(value)) continue;
-      jar.set(name, value);
-    }
-  } else {
-    // A raw header line; the doc allows the file to keep its "Cookie:" prefix.
-    const line = text.replace(/^cookie:\s*/i, '').trim();
-    for (const part of line.split(';')) {
-      const at = part.indexOf('=');
-      if (at <= 0) continue;
-      const name = part.slice(0, at).trim();
-      const value = part.slice(at + 1).trim();
-      if (!COOKIE_NAME.test(name) || !isCookieValue(value)) continue;
-      jar.set(name, value);
-    }
-  }
-  return jar;
-}
-
-/**
- * `SAPISIDHASH <seconds>_<sha1(seconds + " " + secret + " " + origin)>` — the
- * signature the spike measured and the extension's `ytAuth` built before it
- * (DesktopYouTubeAuth's scheme). The timestamp is an argument so callers and
- * tests pin it; the hash input is exactly the three-part string Google's
- * clients use.
- */
-export function sapisidhash(secret: string, origin: string, timestampSeconds: number): string {
-  const digest = createHash('sha1').update(`${timestampSeconds} ${secret} ${origin}`).digest('hex');
-  return `SAPISIDHASH ${timestampSeconds}_${digest}`;
-}
 
 // ---- the credential ------------------------------------------------------------
 
@@ -159,19 +70,14 @@ export function sapisidhash(secret: string, origin: string, timestampSeconds: nu
  * to [persistPath] (as one raw `Cookie:` line) so a restart continues the
  * same session instead of a dead export.
  */
-export class FallbackCredential {
-  private readonly jar: Map<string, string>;
+export class FallbackCredential extends JarCredential {
   private readonly persistPath: string | null;
-  private cookie: string;
-  private secret: string | null;
   /** A trailing persist, so a burst of rotations becomes one write. */
   private persistTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(jar: ReadonlyMap<string, string>, persistPath: string | null = null) {
-    this.jar = new Map(jar);
+    super(jar);
     this.persistPath = persistPath;
-    this.cookie = [...jar].map(([name, value]) => `${name}=${value}`).join('; ');
-    this.secret = SIGNING_COOKIES.map((name) => jar.get(name)).find((value): value is string => !!value) ?? null;
   }
 
   /**
@@ -244,9 +150,8 @@ export class FallbackCredential {
   }
 
   /** Re-derives the signing material from the rotated jar and schedules the persist. */
-  private rotate(): void {
-    this.cookie = [...this.jar].map(([name, value]) => `${name}=${value}`).join('; ');
-    this.secret = SIGNING_COOKIES.map((name) => this.jar.get(name)).find((value): value is string => !!value) ?? null;
+  protected override rotate(): void {
+    super.rotate();
     const path = this.persistPath;
     if (!path) return;
     this.persistTimer ??= setTimeout(() => {
@@ -259,25 +164,6 @@ export class FallbackCredential {
         console.error(`BitChord relay: persisting the fallback jar to ${path} failed: ${String(error)}`);
       }
     }, 1_000);
-  }
-
-  /**
-   * The headers that sign one InnerTube call dressed as [origin]: the jar as
-   * a Cookie header, the SAPISIDHASH for that origin, and the authUser that
-   * addresses the one login the jar is. [timestampSeconds] is the signature's
-   * clock, an argument so tests can pin it.
-   */
-  sign(origin: string, timestampSeconds: number): Record<string, string> {
-    if (!SIGNED_ORIGINS.has(origin)) {
-      // The fence restated where the jar is actually attached: a change that
-      // would send the cookie somewhere new must fail, not ship.
-      throw Object.assign(new Error(`the fallback credential only signs ${MUSIC_ORIGIN} and ${WWW_ORIGIN}`), {
-        code: 'internal',
-      });
-    }
-    const headers: Record<string, string> = { cookie: this.cookie, 'x-goog-authuser': '0' };
-    if (this.secret) headers.authorization = sapisidhash(this.secret, origin, timestampSeconds);
-    return headers;
   }
 
   /**

@@ -26,15 +26,19 @@ phase:
   `GET {base}/media?u=<googlevideo-url>`, serving `https://[*.]googlevideo.com/videoplayback`
   only (`web/relay/src/media.ts`).
 - **hold user credentials.** No cookies, no `sp_dc`, no Discord tokens
-  server-side — a server holding users' raw sessions is a honeypot. Phase 1
-  serves anonymous only; phase 2 adds YouTube sign-in through Google's OAuth
-  device flow, whose tokens live client-side (below). One deliberate
-  exception, decided in `web/docs/private-deployment.md`: a *throwaway*
-  account's cookie as the anonymous-fallback signer on a private deployment
-  — never the public site, never a personal account. Its features are live
-  (signed calls, library, history, likes) while the account itself stays
-  anonymous — no name, avatar or email is ever read or returned
-  (private-deployment.md's invisibility correction, 2026-11-22).
+  server-side — a server holding users' raw sessions is a honeypot. One
+  deliberate exception per credential class, both decided in
+  `web/docs/private-deployment.md`: a *throwaway* account's cookie as the
+  anonymous-fallback signer on a private deployment — never the public
+  site, never a personal account, its features live (signed calls, library,
+  history, likes) while the account itself stays anonymous (the
+  invisibility correction, 2026-11-22) — and, since the same date, the
+  *visitor's own* YouTube jar: page-held, forwarded per call on the
+  `x-bitchord-user-jar` header, attached ephemerally to that request's
+  InnerTube/stats calls and stored nowhere — not on disk, not in the cache,
+  not in memory beyond the request (the "own-account sign-in" section of
+  private-deployment.md). The OAuth sign-in phase 2 once specced is dead:
+  its bearer authenticates and opens nothing (measured, below).
 - **become a general proxy.** Every method is limited to an allowlist of hosts.
 
 What it *does* do — the header surgery the extension's `declarativeNetRequest`
@@ -66,6 +70,15 @@ written). Two endpoints:
 - `POST {base}/bridge` — body: a `BridgeRequest` envelope, answer: a
   `BridgeResponse` envelope. Same ids, same `protocol` check
   (`BRIDGE_PROTOCOL`), same error codes as `extension/entrypoints/background.ts`.
+  One header of the page's may ride the POST: `x-bitchord-user-jar`, the
+  visitor's own YouTube jar as raw cookies.txt/`Cookie:` line text,
+  attached by `serverBridge` on `yt.fetch` and `yt.authState` when the
+  browser holds one (`web/docs/private-deployment.md`, 2026-11-22). The
+  relay signs that request's InnerTube and stats calls with it, reads the
+  visitor's identity for `yt.authState` from it, never caches its answers,
+  and keeps nothing of it beyond the request. The OPTIONS preflight allows
+  the header alongside `content-type` for cross-origin deployments;
+  same-origin ones (the `/relay` reverse proxy) never preflight.
 - `GET {base}/media?u=<googlevideo-url>` (and `HEAD`) — strictly fenced to
   `https://[*.]googlevideo.com/videoplayback`; translates the `<audio>`
   element's open `Range: bytes=0-` (or seek range) into sequential 256 KB
@@ -86,24 +99,28 @@ Methods served:
 
 | Method | Behaviour |
 |---|---|
-| `ping` | as above — the session capabilities are reported only when a fallback credential makes them real |
+| `ping` | as above — the session capabilities are reported only when a fallback credential makes them real (a visitor's jar changes nothing here: `ping` carries none, and the page gates its auth machinery on the jar it holds itself) |
 | `yt.fetch` (no `auth`) | allowlisted YouTube hosts, impersonated as the table above |
-| `yt.fetch` (`auth: true`) | `unauthenticated` without a fallback credential: "The relay can't sign YouTube requests; its operator can set RELAY_FALLBACK_COOKIES_FILE to a shared account." With one loaded, served signed like an anonymous call (`web/docs/private-deployment.md`) |
-| `yt.fetch` (stats pings) | `s.youtube.com/api/stats/*`, GET only — the page's watch-history reporting. Signed by the fallback like any auth call, and never cached: a ping is a side effect, and a served-from-cache answer would swallow the play it registers |
+| `yt.fetch` (no `auth`, user jar) | when the POST carried `x-bitchord-user-jar` with a usable session, the InnerTube and stats families are signed with the *visitor's* jar instead of the fallback — their library, their history (`web/docs/private-deployment.md`). Their answers are never cached (the URL-only key can't tell identities apart). A jar that parses to no session is treated as absent: the fallback covers, nothing breaks |
+| `yt.fetch` (`auth: true`) | `unauthenticated` when there is nothing to sign with — no fallback and no usable page-held jar: "The relay can't sign YouTube requests; its operator can set RELAY_FALLBACK_COOKIES_FILE to a shared account." With either, served signed like an anonymous call, by whichever credential applies (the user jar outranks the fallback) |
+| `yt.fetch` (stats pings) | `s.youtube.com/api/stats/*`, GET only — the page's watch-history reporting. Signed by the user jar when one is carried (the visitor's history), the fallback otherwise; never cached either way: a ping is a side effect, and a served-from-cache answer would swallow the play it registers. The one `x-goog-*` header this family keeps is the page's `x-goog-visitor-id` — the session-bound id the page reads from the signed player answer, part of the ping protocol itself (`historyReporting.ts`); every other family still drops it with the rest of the identity headers |
 | `addon.fetch` | any `https://` URL (user-added addon servers), no cookies, capped |
 | `lyrics.fetch` | only the hosts in the relay's `LYRIC_ORIGINS` (`web/relay/src/hosts.ts`) |
 | `lyrics.permissions` | `{ granted: origins.filter(host is allowlisted) }` — the relay needs no grants |
 | `lyrics.requestPermissions` | no-op `{}` |
-| `yt.authState` | without a fallback: the static signed-out `YtAuthState`. With one: a functional, identity-free signed-in state — `signedIn: true` (the features are live), a chosen-channel `active` row with empty identity fields (nothing is read that could fill them), `accounts: []` — so the page's flows engage while no name, avatar or email can render anywhere (`web/docs/private-deployment.md`, the invisibility correction) |
+| `yt.authState` | without a user jar: the static answers — the signed-out `YtAuthState` with no fallback, the functional identity-free signed-in state with one (`signedIn: true`, a chosen-channel `active` row with empty identity fields, `accounts: []`; the invisibility correction). With a user jar: one `account_menu` read signed as the visitor, answering *their* name/avatar/email — the only identity a relay answer ever carries, because it is the visitor's own; a jar YouTube refuses answers signed-out with `problem` saying what YouTube said, and a paste with no session in it answers the no-session problem without asking YouTube anything |
 | anything else | `{ ok: false, error: { code: 'unsupported', … } }` |
 
 Responses are serialised the way the extension's `ytFetch` did: text
 bodies as `bodyEncoding: 'text'`, anything else base64.
 
 The relay is stateless. It keeps **no** cookies, tokens or user data, and adds
-no credential to any request (`credentials: 'omit'`, and it drops `cookie`,
-`authorization`, and identity `x-goog-*` headers from the page's params while
-keeping the public `x-goog-api-key` BotGuard's `GenerateIT` requires).
+no credential to any request except the two jar credentials the design
+allows: the operator's fallback (held, kept rotating) and the visitor's
+page-held jar (per request only, never stored — `credentials: 'omit'`, and
+it drops `cookie`, `authorization`, and identity `x-goog-*` headers from the
+page's params while keeping the public `x-goog-api-key` BotGuard's
+`GenerateIT` requires).
 
 ## Abuse limits
 

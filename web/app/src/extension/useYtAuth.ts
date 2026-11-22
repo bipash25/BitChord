@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 import type { DetectedExtension, YtAuthState } from '@bitchord/shared/bridge';
 import { queryClient } from '@/lib/queryClient';
 import { extensionQueryKey, useExtension } from './useExtension';
+import { clearUserJar, getUserJar } from './userJar';
 
 /**
  * Who YouTube requests act as (prompt §5.3). The transport owns the session;
@@ -21,7 +22,10 @@ function detected(): DetectedExtension | null {
 }
 
 function supportsAuth(extension: DetectedExtension | null): boolean {
-  return !!extension?.info.capabilities.includes('yt.auth');
+  // The transport signs auth calls when it holds a session of its own
+  // (the relay answers `yt.auth` for that), or when this browser brings its
+  // own jar — either makes the account machinery real for the page.
+  return !!extension?.info.capabilities.includes('yt.auth') || getUserJar() !== null;
 }
 
 /** The current state, for code outside React (the music API, the player). */
@@ -57,9 +61,10 @@ function resetMusic(): void {
 /**
  * Takes in a new state. When the identity changes (sign-in, sign-out, a
  * channel switch), everything read as the old identity is dropped: the home
- * feed, the library, playlists, and the resolver's verdicts.
+ * feed, the library, playlists, and the resolver's verdicts. Exported for the
+ * connect flow, whose verify call already holds the state to adopt.
  */
-function adopt(state: YtAuthState): void {
+export function adoptYtAuth(state: YtAuthState): void {
   queryClient.setQueryData(ytAuthQueryKey, state);
   const identity = identityOf(state);
   if (lastIdentity !== null && identity !== lastIdentity) {
@@ -73,8 +78,17 @@ function adopt(state: YtAuthState): void {
 async function readAuth(refresh: boolean): Promise<YtAuthState> {
   const extension = detected();
   if (!extension || !supportsAuth(extension)) return SIGNED_OUT;
-  const state = await extension.bridge.call('yt.authState', { refresh }, { timeoutMs: 20_000 });
-  adopt(state);
+  let state = await extension.bridge.call('yt.authState', { refresh }, { timeoutMs: 20_000 });
+  if (state.problem !== null && getUserJar() !== null) {
+    // A stored jar the relay could not sign with is a dead export — YouTube
+    // answered the jar itself, not a transient network fault (those throw
+    // instead of answering). Dropping it returns every later call to the
+    // anonymous session, so features keep working while the sign-in prompt
+    // stands again; the re-read adopts that answer rather than the problem.
+    clearUserJar();
+    state = await extension.bridge.call('yt.authState', { refresh: false }, { timeoutMs: 20_000 });
+  }
+  adoptYtAuth(state);
   return state;
 }
 
@@ -103,7 +117,7 @@ export function useYtAuth(): YtAuthStatus {
   useEffect(() => {
     if (!present || !enabled) return;
     return present.bridge.subscribe((event) => {
-      if (event.event === 'yt.authState') adopt(event.data);
+      if (event.event === 'yt.authState') adoptYtAuth(event.data);
     });
   }, [present, enabled]);
 
@@ -120,7 +134,7 @@ export function useSelectChannel() {
       if (!extension) throw new Error('The server relay is not connected');
       return extension.bridge.call('yt.selectChannel', { channelId });
     },
-    onSuccess: adopt,
+    onSuccess: adoptYtAuth,
   });
 }
 
@@ -137,6 +151,6 @@ export function useSetConnected() {
       if (!extension) throw new Error('The server relay is not connected');
       return extension.bridge.call('yt.setConnected', { connected });
     },
-    onSuccess: adopt,
+    onSuccess: adoptYtAuth,
   });
 }

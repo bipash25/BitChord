@@ -37,17 +37,36 @@ as its one transport (`serverBridge`): one endpoint, `POST {base}/bridge`, a
 
 | Method | Behaviour |
 | --- | --- |
-| `ping` | `{ version, protocol: 1, browser: "server", capabilities: ["yt", "addon", "lyrics"] }` — the anonymous subset whether or not a fallback credential is loaded (the credential is invisible) |
-| `yt.fetch` | allowlisted YouTube hosts, impersonated per the table in `src/hosts.ts`. Anonymous InnerTube calls are signed with the fallback account when one is loaded; a page-held `Authorization` is forwarded untouched (bring your own); `auth: true` is served the same way with a fallback, `unauthenticated` without one |
+| `ping` | `{ version, protocol: 1, browser: "server", capabilities: ["yt", "yt.auth", "yt.stats", "addon", "lyrics"] }` with a fallback credential loaded (the session families are real: the relay signs), the anonymous subset `["yt", "addon", "lyrics"]` without one. A visitor's own jar changes nothing here — `ping` carries none |
+| `yt.fetch` | allowlisted YouTube hosts, impersonated per the table in `src/hosts.ts`. Anonymous InnerTube calls are signed with the fallback account when one is loaded; a request carrying the visitor's own jar (`x-bitchord-user-jar`, "User sign-in" below) signs with **that** instead — and its answers are never cached; a page-held `Authorization` is forwarded untouched (bring your own); `auth: true` is served signed by whichever credential applies, `unauthenticated` when none does |
 | `addon.fetch` | any `https://` URL, no cookies, capped |
 | `lyrics.fetch` | only the hosts in `LYRIC_ORIGINS` |
 | `lyrics.permissions` | the requested origins that are allowlisted (the relay needs no grants) |
 | `lyrics.requestPermissions` | a no-op |
-| `yt.authState` | always the static signed-out state — the fallback is invisible (the owner's decision, 2026-11-21); the operator's health check for the credential is the probe, not this answer |
+| `yt.authState` | the static answers without a user jar — the functional identity-free signed-in state when a fallback is loaded (the invisibility correction, 2026-11-22: features live, the throwaway's name never surfaces), signed-out without one. With a user jar: one `account_menu` read signed as the visitor, answering their name/avatar/email — or signed-out plus `problem` saying what YouTube answered when it refuses the session |
 | anything else | `unsupported` (including the retired `spotify.*` family — Spotify is the page's own PKCE business now, `web/docs/relay.md` phase 2) |
 
 Responses are serialised as text bodies (`bodyEncoding: "text"`) and base64
 for everything else.
+
+## User sign-in: the visitor's own YouTube jar
+
+Signing in with your own account is this deployment's recommended path
+(`web/docs/private-deployment.md`, 2026-11-22), and — because no OAuth flow
+works for InnerTube from a web page (the TV bearer authenticates and opens
+nothing, measured) — the mechanism is the user's own session, page-held and
+forwarded per call: the browser stores the exported cookies.txt text, and
+`serverBridge` attaches it as the `x-bitchord-user-jar` header on
+`yt.fetch` and `yt.authState`. This relay parses it per request, signs that
+request's InnerTube and stats calls with it (Cookie + SAPISIDHASH +
+`X-Goog-AuthUser`, the same construction `src/credential.ts` gives both
+credential classes), reads the visitor's identity for `yt.authState`, and
+keeps **nothing** — no disk, no cache (a user-signed answer is never
+cached), no log, no rotation absorbed. A jar that parses to no session is
+treated as absent for signing (the fallback covers); `yt.authState` answers
+it as a problem so the page can drop the dead store. The connect flow,
+the end-user runbook, and the staleness limit (the page's copy is static;
+nothing rotates it) are all in `web/docs/private-deployment.md`.
 
 ## Abuse limits
 

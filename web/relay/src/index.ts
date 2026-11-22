@@ -118,13 +118,17 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
   const allowed = origin !== undefined && allowedOrigins.has(origin);
 
   if (request.method === 'OPTIONS') {
-    // The preflight the page's bridge sends: POST with a content-type. Cached
-    // for a day, so it costs one round trip per browser per day.
+    // The preflight the page's bridge sends: POST with a content-type — plus,
+    // on the two methods that can sign, the visitor's page-held jar
+    // (`x-bitchord-user-jar`, dispatch.ts's RequestContext), which makes the
+    // request non-simple and needs allowing alongside it. Cross-origin only:
+    // the same-origin deployments (/relay under the site) never preflight.
+    // Cached for a day, so it costs one round trip per browser per day.
     response.setHeader('vary', 'Origin');
     if (allowed) {
       response.setHeader('access-control-allow-origin', origin);
       response.setHeader('access-control-allow-methods', 'POST, OPTIONS');
-      response.setHeader('access-control-allow-headers', 'content-type');
+      response.setHeader('access-control-allow-headers', 'content-type, x-bitchord-user-jar');
       response.setHeader('access-control-max-age', '86400');
     }
     response.statusCode = 204;
@@ -172,7 +176,12 @@ async function route(request: IncomingMessage, response: ServerResponse): Promis
     return;
   }
 
-  const envelope = await handle(payload as BridgeRequest, deps);
+  // The visitor's page-held YouTube jar, when the browser brought one: read
+  // here, used for exactly this request's dispatch, and dropped with it. It
+  // never reaches a log line, an error, or anything outliving the request —
+  // the same file never writes it anywhere either.
+  const userJar = header(request.headers, 'x-bitchord-user-jar');
+  const envelope = await handle(payload as BridgeRequest, deps, { userJar });
   response.setHeader('vary', 'Origin');
   if (allowed) response.setHeader('access-control-allow-origin', origin);
   answer(response, 200, 'application/json', JSON.stringify(envelope));

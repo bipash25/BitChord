@@ -53,8 +53,10 @@ traffic, and a household is under the noise floor:
 the server.** Same mechanics, but the blast radius is the whole Google
 account (mail, subscriptions, recovery). The fallback credential is a
 dedicated throwaway, never the personal account. Friends who sign in use
-*their own* accounts through Phase 2's browser-held tokens — their calls,
-their history, no server custody.
+*their own* accounts through their own browser-held sessions — their calls,
+their history, no server custody (the bring-your-own-cookie path below; the
+OAuth bearer Phase 2 specced was measured dead before this document's
+correction).
 
 ## The design
 
@@ -68,9 +70,14 @@ their history, no server custody.
   rescue datacenter IPs, cookies do); the OAuth bearer is the
   NewPipe-suggested but unverified one. On a burner, the cookie's large
   blast radius is irrelevant.
-- **Friends' sign-in: Phase 2 as `relay.md` specced it** — TV OAuth device
-  flow, tokens in the user's browser, `Authorization: Bearer …` forwarded
-  (not stored) by the relay.
+- **Friends' sign-in: their own session, held in their own browser**
+  (the corrected path, 2026-11-22 — see "Own-account sign-in" below; the
+  first draft of this document and `relay.md`'s phase 2 specced the TV OAuth
+  device flow with browser-held tokens, which the measurements in "Open
+  before this is real" closed: the bearer authenticates and opens nothing).
+  The user's YouTube jar, exported in their browser, stored there, and
+  forwarded per call — the relay signs with it ephemerally and keeps
+  nothing.
 - **Relay change:** `yt.fetch` with `auth: true` stops answering
   `unauthenticated` when the server holds the fallback credential — it
   signs the call with it instead. Signed-in users never touch the
@@ -138,6 +145,103 @@ features the relay account provides are fully live.**
 - Hygiene is unchanged: no credential material in any log line, error,
   cache key or answer, ever; the identity-read code stays gone, so no
   query the relay can make ever asks YouTube who the burner is.
+
+## Own-account sign-in — the corrected model, 2026-11-22
+
+The ruling this deployment now runs on: **signing in with your own
+YouTube/Google account is the real, recommended path** — your library,
+likes, history and personalization, your name and avatar in the UI — and the
+throwaway the relay holds is *only* an invisible safety net for visitors who
+haven't signed in: it keeps every feature working anonymously so the site is
+never broken, and its identity never appears anywhere (the invisibility
+correction above, unchanged).
+
+The mechanism is the one the measurements left standing. No OAuth flow works
+for YouTube's InnerTube from a web page — the TV device flow authenticates
+and 403s every endpoint (the matrix below closed it completely) — and a page
+cannot read the browser's Google cookies. The one real path is the old
+extension's trust model minus the extension: **the user's own session, held
+in THEIR browser, forwarded per call through the relay.** This is the
+"bring-your-own-cookie, page-held and forwarded per call" v2 noted above,
+now built.
+
+- **The store** (`web/app/src/extension/userJar.ts`): the jar as raw
+  exported text — a Netscape cookies.txt or a raw `Cookie:` header line,
+  either shape, stored raw and never rendered. The sign-in dialog in the
+  sidebar's account control (`web/app/src/shell/AccountButton.tsx`) walks
+  it: sign in at music.youtube.com; export the session with a
+  "Get cookies.txt"-style browser extension (the same runbook
+  `web/relay/README.md` documents for operators, written for end users);
+  paste or upload the file; verify. The dialog's wording keeps the
+  no-leak discipline — no "shared account", no "server", no "relay" in any
+  user-visible string.
+- **The channel**: `x-bitchord-user-jar` on the POST to `/bridge`,
+  attached by `serverBridge` (`web/shared/src/bridge/server.ts`) on the two
+  methods that can use it (`yt.fetch`, `yt.authState`), read from the page's
+  store at send time so connect/disconnect needs no new transport. The
+  cross-origin preflight allows the header; same-origin deployments (the
+  `/relay` reverse proxy) never preflight at all.
+- **The relay side** (`web/relay/src/userjar.ts`): the jar is parsed per
+  request, signs the InnerTube and stats families for exactly that request
+  (Cookie + `Authorization: SAPISIDHASH` built from the user's SAPISID +
+  `X-Goog-AuthUser: 0` — the same construction the fallback uses; the two
+  credential classes share `credential.ts`), and never becomes state: no
+  disk, no cache, no log, no rotation absorbed, nothing outliving the
+  request.
+- **Precedence**: a request carrying a usable user jar signs with the
+  visitor's session *instead of* the fallback — library, likes,
+  add-to-playlist, personalized browse, the age-gate signed retry, and the
+  watch-history pings (the USER's history, not the burner's). Everything a
+  page sends without one is the fallback's, exactly as before. Answers to
+  user-signed calls are never cached — today's cache key is URL-only, so a
+  credentialed call bypasses it, like the page-`Authorization` bypass
+  already did.
+- **Identity**: `yt.authState` carrying a jar reads
+  `account/account_menu` signed as the visitor and answers their
+  name/avatar/email — the one identity allowed to cross, because it is
+  theirs. Without a jar, the invisible-fallback answer stands. A jar
+  YouTube refuses answers signed-out with `problem` saying what YouTube
+  said; the connect flow shows that sentence, and the page drops the dead
+  jar so every feature returns to the anonymous session undamaged.
+- **Hygiene, tested**: the leak suites run a fake user jar — no part of it,
+  or the SAPISIDHASH built over it, may appear in any answer, error, or log
+  line the relay can produce.
+
+One honest limit, recorded rather than hidden: the page-held jar is a
+static export, and the relay deliberately keeps none of it — so nothing
+rotates it. The source browser staying signed in and active is what kills a
+static export ("likely rotated in the browser", the measurement behind the
+keeper), and a visitor's daily browser is exactly that. When the export
+dies, the auth read answers the problem, the page drops the jar, playback
+continues anonymously, and re-exporting fixes it. Keeping the visitor's jar
+living would mean harvesting `Set-Cookie` rotations back to the page's
+store — a possible v3, not this one.
+
+**Adopted from the Android study** (`web/docs/android-auth-port.md` §9,
+2026-11-22): the working cookie set is matched **by name** — a jar signs
+iff it holds `SAPISID`, `__Secure-3PAPISID` or `__Secure-1PAPISID` (a
+`__Secure-`-only jar is a real login; a substring test once let a
+sign-less jar pass); the connect flow is **validate-then-confirm** — the
+verified account's name and avatar are shown *before* anything is stored,
+and the jar is written only when the visitor says "use this account"
+(Android's never-persist-on-trust rule); and the stats pings carry the
+**session-bound visitorData** read from the signed /player answer (the
+relay forwards `x-goog-visitor-id` on the stats family only), so a play is
+reported about the account that played it. Not adopted, with reasons: the
+shell-derived scope (`dataSyncId`/`pageId`/`onBehalfOfUser`, brand
+channels) — this build sends no scope at all, so there is no stale one to
+guard against, and a single-login export is addressed by the confirm step;
+and the 401/403 write-path retry-refresh — with no scope to refresh, a
+refused jar is a dead jar, which the auth read already surfaces.
+
+1. Sign in at music.youtube.com in this browser, then come back.
+2. Export the session with a cookies.txt extension ("Get cookies.txt" and
+   friends) while signed in; keep the file to yourself — it is the
+   sign-in.
+3. Paste the file's contents into the dialog (or pick the file).
+4. Verify: their name, avatar and email appear, and the library and history
+   are theirs from then on. Failure shows YouTube's own answer about the
+   session — re-export and retry.
 
 ## Open before this is real
 

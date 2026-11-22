@@ -100,9 +100,10 @@ export function isStatsUrl(url: URL): boolean {
  * by asking `lyrics.permissions`. The relay performs no per-host header
  * surgery (the Musixmatch capability cookie, Apple's Origin) — the design
  * rule is that no credential, and no cookie of any kind, is ever added to a
- * lyric or addon request. The one cookie the relay ever attaches is the
- * fallback's, on the YouTube rows it signs — InnerTube and the stats pings
- * (`fallback.ts`).
+ * lyric or addon request. The only cookies the relay ever attaches are jar
+ * credentials — the fallback's or the visitor's page-held one — on the
+ * YouTube rows they sign: InnerTube and the stats pings (`fallback.ts`,
+ * `userjar.ts`).
  */
 export const LYRIC_ORIGINS = [
   'https://lrc.red',
@@ -160,8 +161,9 @@ export function isMediaUrl(url: URL): boolean {
 /**
  * Header names the relay never forwards from the page's params:
  * - `cookie`: identity. A page never gets to choose the session a request
- *   rides on — the fallback credential is the relay's to attach and nothing
- *   else's (private-deployment.md's hygiene).
+ *   rides on — a jar is attached by the relay, from the credential it holds
+ *   or the `x-bitchord-user-jar` header the *whole call* arrived with, never
+ *   from the call's own headers (private-deployment.md's hygiene).
  * - `user-agent`: always the relay's pinned Chromium, mirroring what a
  *   browser's fetch does to a page that tries to set its own.
  * - `host`, `content-length`: forbidden header names a browser fetch silently
@@ -190,10 +192,18 @@ const HEADER_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
  * exception stands in both settings: a `SAPISIDHASH` value is never the
  * page's to speak — that scheme is the relay's to build over its own jar, so
  * a page-supplied one is dropped like a cookie would be.
+ *
+ * [options.forwardVisitorId] (the stats-ping family only) lets the page's
+ * `x-goog-visitor-id` through: the visitor id is part of the playback-stats
+ * protocol — the signed session's own id, which the page reads from the
+ * session-bound player answer (`historyReporting.ts`) so a play is reported
+ * about the account that played it, not "about nobody" — and it is a
+ * pseudonymous id, never a credential. Every other family still drops it,
+ * along with the rest of the identity headers.
  */
 export function sanitiseHeaders(
   headers: Record<string, string>,
-  options: { forwardAuthorization?: boolean } = {},
+  options: { forwardAuthorization?: boolean; forwardVisitorId?: boolean } = {},
 ): Record<string, string> {
   const outgoing: Record<string, string> = {};
   for (const [name, value] of Object.entries(headers)) {
@@ -202,7 +212,12 @@ export function sanitiseHeaders(
     if (lower === '__proto__') continue;
     if (typeof value !== 'string' || value.includes('\r') || value.includes('\n')) continue;
     if (lower === 'authorization' && (!options.forwardAuthorization || value.startsWith('SAPISIDHASH '))) continue;
-    if (DROPPED_HEADERS.has(lower) || (lower.startsWith('x-goog-') && lower !== 'x-goog-api-key')) continue;
+    if (
+      DROPPED_HEADERS.has(lower) ||
+      (lower.startsWith('x-goog-') && lower !== 'x-goog-api-key' && !(options.forwardVisitorId && lower === 'x-goog-visitor-id'))
+    ) {
+      continue;
+    }
     if (!HEADER_NAME.test(name)) continue;
     outgoing[lower] = value;
   }

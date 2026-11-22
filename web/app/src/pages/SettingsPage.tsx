@@ -5,6 +5,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { PrefetchLink } from '@/components/PrefetchLink';
 import { useExtension } from '@/extension/useExtension';
 import { useYtAuth } from '@/extension/useYtAuth';
+import { getUserJar } from '@/extension/userJar';
 import { useParty } from '@/party/useParty';
 import { useHistorySettings } from '@/playback/historyReporting';
 import { Select } from '@/components/Select';
@@ -40,17 +41,19 @@ function LinkRow({ to, icon, title, value }: { to: string; icon?: ReactNode; tit
 
 function youtubeText(auth: ReturnType<typeof useYtAuth>): string {
   if (auth.state === 'checking') return 'Checking…';
-  // No yt.auth capability: the relay runs anonymous-only — no fallback account is configured.
+  // No way to sign at all: no session behind the app and no jar of the
+  // visitor's own — anonymous-only.
   if (auth.state === 'unavailable') return 'Not signed in';
   const { browserSignedIn, connected, signedIn, active } = auth.auth;
-  // The relay's session (web/docs/private-deployment.md) is functional but
-  // anonymous: its account signs playback, library, likes and history, while
-  // its name never reaches the page (the corrected invisibility ruling,
-  // 2026-11-22) — so where the account's own name would stand, this row
-  // carries the sign-in prompt instead. The browser holds no session of its
-  // own in any relay shape, so browserSignedIn paths are dead here but kept
-  // honest for any future transport that does hold one.
-  if (signedIn && !browserSignedIn) return 'Sign in with YouTube';
+  // The account row answers for whichever session is live (web/docs/
+  // private-deployment.md, 2026-11-22): the visitor's own, when they've
+  // connected their YouTube session — then their name stands here, as it
+  // should — or the anonymous session every visitor gets, whose identity is
+  // deliberately empty (the invisibility ruling) so this row carries the
+  // sign-in prompt where a name would have been. The browser holds no
+  // session of its own in any relay shape, so browserSignedIn paths are dead
+  // here but kept honest for any future transport that does hold one.
+  if (signedIn && !browserSignedIn) return active?.name || 'Sign in with YouTube';
   if (!browserSignedIn) return 'Not signed in';
   if (!connected) return 'Disconnected';
   return active ? active.name : 'Signed in';
@@ -77,11 +80,12 @@ export default function SettingsPage() {
   // The relay is the only transport, so this is just "did it answer". AutoMix's
   // Web Audio graph would be silent over it, so the setting says so (relay.md §5).
   const relay = present && extension.extension.info.browser === 'server';
-  // Whether plays can be reported to the account's YouTube Music history: the
-  // transport must sign the stats pings (the relay reports `yt.stats` only when
-  // a fallback credential is loaded), so the toggle is shown only when it
-  // would do something.
-  const historyReporting = present && extension.extension.info.capabilities.includes('yt.stats');
+  // Whether plays can be reported to a real account's YouTube Music history:
+  // the transport must be able to sign the stats pings — its own session (the
+  // relay reports `yt.stats` when it holds one) or the visitor's connected
+  // jar, whose history the plays then land in.
+  const historyReporting =
+    present && (extension.extension.info.capabilities.includes('yt.stats') || getUserJar() !== null);
 
   return (
     <div className={settingsUi.centered}>
