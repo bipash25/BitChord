@@ -1,13 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
 import { artworkAtPixels } from '@/lib/artwork';
 import { GRID, MESH_FADE_MS, meshPalette, type Rgb } from '@/lib/meshPalette';
-import { useReducedMotion } from '@/lib/motionPrefs';
+import { useReducedBlur, useReducedMotion } from '@/lib/motionPrefs';
 
 /** How long the bottom seam glides to a new edge (NowPlayingScreen.kt:305). */
 export const MESH_SEAM_MOVE_MS = 320;
 
+/** How long a new cover takes to cover the last one behind the lyrics (ArtworkMeshBackdrop.kt:150). */
+export const FULL_BLUR_CROSSFADE_MS = 320;
+
+/** FastOutSlowIn, the easing both backdrop crossfades run on. */
+const FAST_OUT_SLOW_IN = 'cubic-bezier(0.4, 0, 0.2, 1)';
+
+/** FullArtworkScrim (ArtworkMeshBackdrop.kt:406-410): 34% → 48% → 64% down the panel. */
+const FULL_BLUR_SCRIM =
+  'linear-gradient(to bottom, rgba(0, 0, 0, 0.34) 0%, rgba(0, 0, 0, 0.48) 55%, rgba(0, 0, 0, 0.64) 100%)';
+
 /** Drawn only until an artwork has been read (ArtworkMeshBackdrop.kt:413). */
 const FALLBACK_HEX = '#121212';
+
 const FALLBACK: Rgb[] = Array.from({ length: GRID * GRID }, () => [18, 18, 18]);
 
 const VERTEX = `attribute vec2 p; void main() { gl_Position = vec4(p, 0.0, 1.0); }`;
@@ -195,6 +206,98 @@ function canvasRenderer(canvas: HTMLCanvasElement): Renderer | null {
   };
 }
 
+export interface BlurredArtworkBackdropProps {
+  artworkUrl: string | null;
+}
+
+/**
+ * Android `FullArtworkBlurBackdrop` (ArtworkMeshBackdrop.kt:128-168): the blurred
+ * cover the lyrics stand on — one 120px copy cropped across the bounds and blurred
+ * in place, under the 34/48/64% scrim that keeps white lyric type readable.
+ *
+ * A new cover crossfades in over the last one in 320ms FastOutSlowIn, and the old
+ * cover stays painted until the new image has actually loaded — the web's stand-in
+ * for the prepared-bitmap cache that keeps a skip from dropping the backdrop to
+ * the fallback grey. Reduced motion cuts the crossfade to a swap; the app's
+ * reduced-blur contract trades the cover for the opaque fallback grey rather
+ * than paying for a viewport-wide live blur.
+ */
+export function BlurredArtworkBackdrop({ artworkUrl }: BlurredArtworkBackdropProps) {
+  const reducedMotion = useReducedMotion();
+  const reducedBlur = useReducedBlur();
+  const img = useRef<HTMLImageElement>(null);
+  // The cover on top, and the one it is covering while the crossfade runs.
+  const [covers, setCovers] = useState<{ shown: string | null; outgoing: string | null }>({
+    shown: artworkUrl,
+    outgoing: null,
+  });
+  // The incoming cover only starts its fade once it has decoded; until then the
+  // outgoing one keeps the panel from dipping to the fallback.
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    if (covers.shown !== artworkUrl) {
+      setReady(false);
+      setCovers((s) =>
+        s.shown === artworkUrl ? s : { shown: artworkUrl, outgoing: reducedMotion ? null : s.shown },
+      );
+    }
+  }, [artworkUrl, covers.shown, reducedMotion]);
+
+  // Retire the covered image only once the crossfade that covers it has run —
+  // a cover that never loads leaves the last one standing, as Android's
+  // prepared-bitmap cache does on a failed decode.
+  useEffect(() => {
+    if (!covers.outgoing || !ready) return;
+    const timer = setTimeout(
+      () => setCovers((s) => ({ shown: s.shown, outgoing: null })),
+      FULL_BLUR_CROSSFADE_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [covers.outgoing, covers.shown, ready]);
+
+  // A cached image can already be complete before the load handler attaches.
+  useEffect(() => {
+    const el = img.current;
+    if (el?.complete && el.naturalWidth > 0) setReady(true);
+  }, [covers.shown]);
+
+  return (
+    <div
+      className="pointer-events-none absolute inset-0 overflow-hidden"
+      style={{ backgroundColor: FALLBACK_HEX }}
+      aria-hidden="true"
+      data-blur-backdrop
+    >
+      {!reducedBlur && covers.outgoing && (
+        <img
+          src={artworkAtPixels(covers.outgoing, 120)}
+          alt=""
+          referrerPolicy="no-referrer"
+          decoding="async"
+          className="absolute inset-0 size-full scale-115 object-cover blur-[42px] saturate-125"
+        />
+      )}
+      {!reducedBlur && covers.shown && (
+        <img
+          ref={img}
+          src={artworkAtPixels(covers.shown, 120)}
+          alt=""
+          referrerPolicy="no-referrer"
+          decoding="async"
+          onLoad={() => setReady(true)}
+          className="absolute inset-0 size-full scale-115 object-cover blur-[42px] saturate-125"
+          style={{
+            opacity: ready ? 1 : 0,
+            transition: reducedMotion ? 'none' : `opacity ${FULL_BLUR_CROSSFADE_MS}ms ${FAST_OUT_SLOW_IN}`,
+          }}
+        />
+      )}
+      <div className="pointer-events-none absolute inset-0" style={{ background: FULL_BLUR_SCRIM }} />
+    </div>
+  );
+}
+
 export interface MeshBackdropProps {
   artworkUrl: string | null;
   /** Portrait artwork bottom edge in px from top of viewport; 0 stretches full screen. */
@@ -207,7 +310,8 @@ export interface MeshBackdropProps {
  * Android-ported player backdrop (`ArtworkMeshBackdrop.kt`):
  * - `'mesh'`: 6×6 bottom-seam-anchored sleeve mesh, still except for 900ms track
  *   crossfades and 320ms seam glides, under a black 6%→30% vertical scrim.
- * - `'fullBlur'`: 120px blurred sleeve under a 34%→48%→64% scrim (lyrics/queue/theater).
+ * - `'fullBlur'`: `BlurredArtworkBackdrop` — the 120px blurred sleeve under a
+ *   34%→48%→64% scrim, crossfading covers on a track change (lyrics/queue/theater).
  */
 export function MeshBackdrop({ artworkUrl, seamY = 0, mode = 'mesh' }: MeshBackdropProps) {
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -320,7 +424,6 @@ export function MeshBackdrop({ artworkUrl, seamY = 0, mode = 'mesh' }: MeshBackd
     };
   }, [generation, fallback, reducedMotion]);
 
-  const blurSrc = artworkUrl ? artworkAtPixels(artworkUrl, 120) : null;
   const showFullBlur = mode === 'fullBlur';
 
   return (
@@ -338,32 +441,17 @@ export function MeshBackdrop({ artworkUrl, seamY = 0, mode = 'mesh' }: MeshBackd
         style={{ background: 'linear-gradient(to bottom, rgba(0, 0, 0, 0.06), rgba(0, 0, 0, 0.3))' }}
       />
 
-      {/* Full-cover blur crossfade (NowPlayingScreen.kt:2368-2377): 360ms FastOutSlowIn over the mesh. */}
+      {/* Full-cover blur (NowPlayingScreen.kt:2368-2377): 360ms FastOutSlowIn
+          over the mesh when the lyrics/queue columns open; the cover-change
+          crossfade inside it is BlurredArtworkBackdrop's own. */}
       <div
         className="pointer-events-none absolute inset-0"
         style={{
           opacity: showFullBlur ? 1 : 0,
-          transition: reducedMotion ? 'none' : 'opacity 360ms cubic-bezier(0.4, 0, 0.2, 1)',
+          transition: reducedMotion ? 'none' : `opacity 360ms ${FAST_OUT_SLOW_IN}`,
         }}
       >
-        {blurSrc && (
-          <img
-            key={blurSrc}
-            src={blurSrc}
-            alt=""
-            referrerPolicy="no-referrer"
-            decoding="async"
-            className="absolute inset-0 size-full scale-115 object-cover blur-[42px] saturate-125"
-          />
-        )}
-        {/* FullArtworkScrim (ArtworkMeshBackdrop.kt:406-410): 34% → 48% → 64%. */}
-        <div
-          className="pointer-events-none absolute inset-0"
-          style={{
-            background:
-              'linear-gradient(to bottom, rgba(0, 0, 0, 0.34) 0%, rgba(0, 0, 0, 0.48) 55%, rgba(0, 0, 0, 0.64) 100%)',
-          }}
-        />
+        <BlurredArtworkBackdrop artworkUrl={artworkUrl} />
       </div>
     </div>
   );

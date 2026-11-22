@@ -109,6 +109,18 @@
 }
 
 /*
+ * The lyric line's glow alpha, tweened 0 → 1 by the am-lyrics shadow-DOM sheet
+ * when a line turns active (420ms, PlayerLyrics.kt:2274-2281). Registered at
+ * document level so the shadow tree's transition interpolates it smoothly —
+ * and inherited, so every syllable's text-shadow reads the ramping value.
+ */
+@property --bc-lyric-glow {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+
+/*
  * Grouped settings rows: a 0.5px hairline between two rows of the same kind,
  * inset from the left by the value (to the text, past an icon).
  */

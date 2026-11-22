@@ -648,7 +648,11 @@ export function FullScreenPlayer() {
       onPointerCancel={(e) => finishSheetDrag(e, true)}
       onKeyDown={wake}
     >
-      <div ref={contentRef} className="relative flex size-full flex-col bg-[#121212]">
+      {/* No background of its own: the MeshBackdrop behind carries the base
+          colour (its fallback #121212). An opaque background here would paint
+          over the backdrop's negative z-index layer and hide it — which is
+          exactly what the solid dark the lyrics used to sit on was. */}
+      <div ref={contentRef} className="relative flex size-full flex-col">
         <MeshBackdrop artworkUrl={nowPlaying.artworkUrl} seamY={seamY} mode={backdropMode} />
 
         {/* Full-bleed phone hero artwork with 16-stop smootherstep dissolve + gradient blur into 6x6 mesh (NowPlayingScreen.kt:3006-3311). */}

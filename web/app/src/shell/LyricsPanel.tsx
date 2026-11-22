@@ -65,12 +65,14 @@ function useLyricFont(): boolean {
  * - Synced 34px/41px ExtraBold (asked 800 → Bold in BitChord SF Pro Display), unsynced 30px/38px.
  * - Unswept part at 45% alpha (side panel keeps 55% strip alpha).
  * - Glow bloom: 6px radius white@62% with 10px room on carried words; 30px wipe feather; 2px word rise.
+ * - Line-activation glow ramp: the bloom alpha tweens 420ms FastOutSlowIn as a line turns
+ *   active (PlayerLyrics.kt:2274-2281) instead of snapping in.
  * - Line falloff: 1 / .8 / .7 / .58 / .46 (phone: 1 / .74 / .6 / .48 / .4 / .34), blur 0 / 1 / 1 / 1.7 / 2.4px.
  * - Scroll & line settle: 400ms cubic-bezier(.41, 0, .12, .99), pressed .96, inactive .98, browsing .8.
  * - Backing vocals: 23px/29px @ 72%, 6px rise, 400ms open / 450ms close, rest scale .94; duet lane 44px.
  * - Translation slide: 540ms; instrumental dots: 13px / 5px gaps / .25 rest alpha / .76 rest scale.
  */
-const ANDROID_LYRICS_STYLE = `
+export const ANDROID_LYRICS_STYLE = `
   :host([data-full]) {
     --lyplus-text-secondary: color-mix(in srgb, var(--lyplus-lyrics-palette), transparent 55%);
     --lyplus-font-size-base: 34px;
@@ -112,10 +114,38 @@ const ANDROID_LYRICS_STYLE = `
       filter 400ms cubic-bezier(0.41, 0, 0.12, 0.99);
   }
 
-  :host([data-full]) .lyrics-line.active,
+  /* Line activation carries the glow ramp: --bc-lyric-glow (registered in
+     global.css) tweens 0 → 1 over 420ms FastOutSlowIn, matching the Android
+     bloom alpha's tween on isActive (PlayerLyrics.kt:2277-2281). Only the
+     active state owns the entry timing, so a line losing focus keeps today's
+     instant drop inside its 400ms falloff — Android's exit is the line dimming
+     and blurring, not the bloom fading. am-lyrics owns the syllable-level
+     transitions (and writes inline ones mid-wipe), so the ramp rides the line
+     as an inherited custom property the shadows read instead. */
+  :host([data-full]) .lyrics-line.active {
+    --bc-lyric-glow: 1;
+    opacity: 1;
+    filter: blur(0px) !important;
+    transition:
+      opacity 400ms cubic-bezier(0.41, 0, 0.12, 0.99),
+      transform 400ms cubic-bezier(0.41, 0, 0.12, 0.99) var(--lyrics-line-delay, 0ms),
+      filter 400ms cubic-bezier(0.41, 0, 0.12, 0.99),
+      --bc-lyric-glow 420ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
   :host([data-full]) .lyrics-line.pre-active {
     opacity: 1;
     filter: blur(0px) !important;
+  }
+
+  /* Reduced motion keeps the glow arriving at full strength with the line. */
+  @media (prefers-reduced-motion: reduce) {
+    :host([data-full]) .lyrics-line.active {
+      transition:
+        opacity 400ms cubic-bezier(0.41, 0, 0.12, 0.99),
+        transform 400ms cubic-bezier(0.41, 0, 0.12, 0.99) var(--lyrics-line-delay, 0ms),
+        filter 400ms cubic-bezier(0.41, 0, 0.12, 0.99);
+    }
   }
 
   :host([data-full]) .lyrics-line.post-active-line:not(.active):not(.pre-active):not(.lyrics-gap),
@@ -180,10 +210,13 @@ const ANDROID_LYRICS_STYLE = `
     filter: none !important;
   }
 
-  /* Carried word glow: 6px white @ 62% (PlayerLyrics.kt:230-248) */
+  /* Carried word glow: 6px white @ 62% (PlayerLyrics.kt:230-248), its alpha
+     riding the line's --bc-lyric-glow ramp so the bloom the owner asked to
+     smooth fades in with activation rather than snapping (the sweep-driven
+     highlight per word still hands over mid-line the way it always did). */
   :host([data-full]) .lyrics-line.active .lyrics-syllable.highlight,
   :host([data-full]) .lyrics-line.active .lyrics-syllable.pre-highlight {
-    text-shadow: 0 0 6px rgba(255, 255, 255, 0.62);
+    text-shadow: 0 0 6px rgba(255, 255, 255, calc(0.62 * var(--bc-lyric-glow, 0)));
   }
 
   /* Backing vocals: 23px/29px @ 72%, 6px rise, 400/450ms (PlayerLyrics.kt:257-285) */
