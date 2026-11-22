@@ -185,13 +185,18 @@ function BottomActionTile({
   return (
     <button
       type="button"
-      className="grid size-(--bc-bottom-action) place-items-center rounded-[10px] text-white/75 transition-[transform,color] duration-150 hover:text-white active:scale-92"
+      className="relative grid size-(--bc-bottom-action) place-items-center rounded-[10px] text-white/75 transition-[transform,color] duration-200 hover:text-white active:scale-92"
       aria-label={label}
       aria-pressed={active}
       onClick={onClick}
     >
-      {active ? (
-        <svg width={35} height={35} viewBox="0 0 35 35" aria-hidden="true">
+      <span
+        className={`absolute inset-0 grid place-items-center transition-[opacity,transform] duration-200 ease-out ${
+          active ? 'scale-100 opacity-100' : 'scale-85 opacity-0'
+        }`}
+        aria-hidden="true"
+      >
+        <svg width={35} height={35} viewBox="0 0 35 35">
           <defs>
             <mask id={maskId}>
               <rect width={35} height={35} rx={7} fill="#ffffff" />
@@ -200,9 +205,15 @@ function BottomActionTile({
           </defs>
           <rect width={35} height={35} rx={7} fill="rgba(255, 255, 255, 0.62)" mask={`url(#${maskId})`} />
         </svg>
-      ) : (
+      </span>
+      <span
+        className={`grid place-items-center transition-[opacity,transform] duration-200 ease-out ${
+          active ? 'scale-90 opacity-0' : 'scale-100 opacity-100'
+        }`}
+        aria-hidden="true"
+      >
         <Icon size={26} />
-      )}
+      </span>
     </button>
   );
 }
@@ -300,13 +311,13 @@ export function FullScreenPlayer() {
     return () => sheet.registerSheet(null, null);
   }, [sheet]);
 
-  const fullBleedHero =
+  const fullBleedHeroEligible =
     !viewport.landscape &&
     viewport.w <= 620 &&
-    !column &&
     !theater &&
     !video &&
     Boolean(nowPlaying?.artworkUrl);
+  const fullBleedHero = fullBleedHeroEligible && !column;
   const portraitMainArt = !viewport.landscape && !column && !theater;
   const desktopArtVisible = viewport.landscape && !theater;
 
@@ -505,7 +516,7 @@ export function FullScreenPlayer() {
       {nowPlaying.artworkUrl && (
         <img
           key={nowPlaying.artworkUrl}
-          className="size-full object-cover"
+          className="size-full animate-[fade-in_320ms_ease] object-cover"
           src={sizedArtwork(nowPlaying.artworkUrl, 600)}
           alt=""
           referrerPolicy="no-referrer"
@@ -526,7 +537,10 @@ export function FullScreenPlayer() {
 
   const renderMetadata = (compact = false) => (
     <div className="flex items-center gap-3">
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+      <div
+        key={`${videoId}-${title}-${compact ? 'c' : 'f'}`}
+        className="flex min-w-0 flex-1 animate-[fade-in_300ms_ease] flex-col gap-0.5"
+      >
         <div className="flex min-w-0 items-center gap-1.5">
           <Marquee
             measureKey={`${title}-${compact ? 'c' : 'f'}`}
@@ -638,20 +652,26 @@ export function FullScreenPlayer() {
         <MeshBackdrop artworkUrl={nowPlaying.artworkUrl} seamY={seamY} mode={backdropMode} />
 
         {/* Full-bleed phone hero artwork with 16-stop smootherstep dissolve + gradient blur into 6x6 mesh (NowPlayingScreen.kt:3006-3311). */}
-        {fullBleedHero && nowPlaying.artworkUrl && (
+        {fullBleedHeroEligible && nowPlaying.artworkUrl && (
           <div
-            ref={openArtRef}
+            ref={fullBleedHero ? openArtRef : undefined}
             className="pointer-events-none absolute inset-x-0 top-0 z-0 overflow-hidden"
             style={{
               height: heroBottomPx > 0 ? `${heroBottomPx}px` : '56dvh',
               maskImage: heroMask,
               WebkitMaskImage: heroMask,
+              opacity: fullBleedHero ? 1 : 0,
+              transform: fullBleedHero ? 'scale(1)' : 'scale(0.92)',
+              transformOrigin: 'top center',
+              transition: reducedMotion
+                ? 'none'
+                : 'opacity 420ms cubic-bezier(0.2, 0, 0, 1), transform 420ms cubic-bezier(0.2, 0, 0, 1)',
             }}
             aria-hidden="true"
           >
             <img
               key={nowPlaying.artworkUrl}
-              className="size-full object-cover"
+              className="size-full animate-[fade-in_320ms_ease] object-cover"
               src={sizedArtwork(nowPlaying.artworkUrl, 900)}
               alt=""
               referrerPolicy="no-referrer"
@@ -838,7 +858,7 @@ export function FullScreenPlayer() {
                 </div>
               </>
             ) : (
-              <>
+              <div key="portrait-main" className="flex min-h-0 flex-1 animate-enter flex-col">
                 <div ref={heroSlotRef} className="flex min-h-0 flex-1 touch-none items-center justify-center py-2">
                   {!fullBleedHero &&
                     renderArtworkBox(
@@ -854,7 +874,7 @@ export function FullScreenPlayer() {
                   <Transport />
                   <div className="mt-2">{renderBottomRow(false)}</div>
                 </div>
-              </>
+              </div>
             )}
           </div>
         )}
